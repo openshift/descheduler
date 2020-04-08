@@ -21,6 +21,7 @@ import (
 
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/descheduler/test"
 )
@@ -62,14 +63,23 @@ func TestReadyNodesWithNodeSelector(t *testing.T) {
 
 	fakeClient := fake.NewSimpleClientset(node1, node2)
 	nodeSelector := "type=compute"
-	nodes, _ := ReadyNodes(fakeClient, nodeSelector, nil)
+
+	sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
+	nodeInformer := sharedInformerFactory.Core().V1().Nodes()
+
+	stopChannel := make(chan struct{}, 0)
+	sharedInformerFactory.Start(stopChannel)
+	sharedInformerFactory.WaitForCacheSync(stopChannel)
+	defer close(stopChannel)
+
+	nodes, _ := ReadyNodes(fakeClient, nodeInformer, nodeSelector, nil)
 
 	if nodes[0].Name != "node1" {
 		t.Errorf("Expected node1, got %s", nodes[0].Name)
 	}
 }
 
-func TestIsNodeUschedulable(t *testing.T) {
+func TestIsNodeUnschedulable(t *testing.T) {
 	tests := []struct {
 		description     string
 		node            *v1.Node
@@ -91,7 +101,7 @@ func TestIsNodeUschedulable(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		actualUnSchedulable := IsNodeUschedulable(test.node)
+		actualUnSchedulable := IsNodeUnschedulable(test.node)
 		if actualUnSchedulable != test.IsUnSchedulable {
 			t.Errorf("Test %#v failed", test.description)
 		}
@@ -236,6 +246,49 @@ func TestPodFitsAnyNode(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
 							nodeLabelKey: "no",
+						},
+					},
+				},
+			},
+			success: true,
+		},
+		{
+			description: "Pod expected to fit one of the nodes (error node first)",
+			pod: &v1.Pod{
+				Spec: v1.PodSpec{
+					Affinity: &v1.Affinity{
+						NodeAffinity: &v1.NodeAffinity{
+							RequiredDuringSchedulingIgnoredDuringExecution: &v1.NodeSelector{
+								NodeSelectorTerms: []v1.NodeSelectorTerm{
+									{
+										MatchExpressions: []v1.NodeSelectorRequirement{
+											{
+												Key:      nodeLabelKey,
+												Operator: "In",
+												Values: []string{
+													nodeLabelValue,
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			nodes: []*v1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							nodeLabelKey: "no",
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							nodeLabelKey: nodeLabelValue,
 						},
 					},
 				},

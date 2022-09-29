@@ -57,7 +57,15 @@ import (
 )
 
 func MakePodSpec(priorityClassName string, gracePeriod *int64) v1.PodSpec {
+	runAsUser := true
+	ape := false
 	return v1.PodSpec{
+		SecurityContext: &v1.PodSecurityContext{
+                  RunAsNonRoot: &runAsUser,
+                  SeccompProfile: &v1.SeccompProfile{
+                    Type: v1.SeccompProfileTypeRuntimeDefault,
+                    },
+                },
 		Containers: []v1.Container{{
 			Name:            "pause",
 			ImagePullPolicy: "Never",
@@ -73,6 +81,14 @@ func MakePodSpec(priorityClassName string, gracePeriod *int64) v1.PodSpec {
 					v1.ResourceMemory: resource.MustParse("100Mi"),
 				},
 			},
+			SecurityContext: &v1.SecurityContext{
+                          AllowPrivilegeEscalation: &ape,
+                          Capabilities: &v1.Capabilities{
+                            Drop: []v1.Capability{
+                              "ALL",
+                            },
+                          },
+                        },
 		}},
 		PriorityClassName:             priorityClassName,
 		TerminationGracePeriodSeconds: gracePeriod,
@@ -297,6 +313,7 @@ func TestLowNodeUtilization(t *testing.T) {
 
 	t.Log("Creating pods all bound to a single node")
 	for i := 0; i < 4; i++ {
+		runAsUser := true
 		pod := &v1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      fmt.Sprintf("lnu-pod-%v", i),
@@ -304,6 +321,12 @@ func TestLowNodeUtilization(t *testing.T) {
 				Labels:    map[string]string{"test": "node-utilization", "name": "test-rc-node-utilization"},
 			},
 			Spec: v1.PodSpec{
+				SecurityContext: &v1.PodSecurityContext{
+                                  RunAsNonRoot: &runAsUser,
+                                  SeccompProfile: &v1.SeccompProfile{
+                                    Type: v1.SeccompProfileTypeRuntimeDefault,
+                                  },
+                                },
 				Containers: []v1.Container{{
 					Name:            "pause",
 					ImagePullPolicy: "Never",
@@ -1280,6 +1303,7 @@ func createBalancedPodForNodes(
 		needCreateResource[v1.ResourceMemory] = *resource.NewQuantity(int64((ratio-memFraction)*float64(memAllocatableVal)+float64(crioMinMemLimit)), resource.BinarySI)
 
 		gracePeriod := int64(1)
+		runAsUser := true
 		// Don't set OwnerReferences to avoid pod eviction
 		pod := &v1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -1288,6 +1312,12 @@ func createBalancedPodForNodes(
 				Labels:    balancePodLabel,
 			},
 			Spec: v1.PodSpec{
+				SecurityContext: &v1.PodSecurityContext{
+                                  RunAsNonRoot: &runAsUser,
+                                  SeccompProfile: &v1.SeccompProfile{
+                                    Type: v1.SeccompProfileTypeRuntimeDefault,
+                                  },
+                                },
 				Affinity: &v1.Affinity{
 					NodeAffinity: &v1.NodeAffinity{
 						RequiredDuringSchedulingIgnoredDuringExecution: &v1.NodeSelector{

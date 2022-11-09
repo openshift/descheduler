@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/events"
 
 	"sigs.k8s.io/descheduler/pkg/api"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
@@ -139,12 +140,14 @@ func TestPodLifeTime(t *testing.T) {
 
 	var maxLifeTime uint = 600
 	testCases := []struct {
-		description             string
-		strategy                api.DeschedulerStrategy
-		pods                    []*v1.Pod
-		nodes                   []*v1.Node
-		expectedEvictedPodCount uint
-		ignorePvcPods           bool
+		description                string
+		strategy                   api.DeschedulerStrategy
+		pods                       []*v1.Pod
+		nodes                      []*v1.Node
+		expectedEvictedPodCount    uint
+		ignorePvcPods              bool
+		maxPodsToEvictPerNode      *uint
+		maxPodsToEvictPerNamespace *uint
 	}{
 		{
 			description: "Two pods in the `dev` Namespace, 1 is new and 1 very is old. 1 should be evicted.",
@@ -195,13 +198,69 @@ func TestPodLifeTime(t *testing.T) {
 			expectedEvictedPodCount: 0,
 		},
 		{
-			description: "Two old pods with different status phases. 1 should be evicted.",
+			description: "Two pods, one with ContainerCreating state. 1 should be evicted.",
 			strategy: api.DeschedulerStrategy{
 				Enabled: true,
 				Params: &api.StrategyParameters{
 					PodLifeTime: &api.PodLifeTime{
 						MaxPodLifeTimeSeconds: &maxLifeTime,
-						PodStatusPhases:       []string{"Pending"},
+						States:                []string{"ContainerCreating"},
+					},
+				},
+			},
+			pods: []*v1.Pod{
+				p9,
+				test.BuildTestPod("container-creating-stuck", 0, 0, node1.Name, func(pod *v1.Pod) {
+					pod.Status.ContainerStatuses = []v1.ContainerStatus{
+						{
+							State: v1.ContainerState{
+								Waiting: &v1.ContainerStateWaiting{Reason: "ContainerCreating"},
+							},
+						},
+					}
+					pod.OwnerReferences = ownerRef1
+					pod.ObjectMeta.CreationTimestamp = olderPodCreationTime
+				}),
+			},
+			nodes:                   []*v1.Node{node1},
+			expectedEvictedPodCount: 1,
+		},
+		{
+			description: "Two pods, one with PodInitializing state. 1 should be evicted.",
+			strategy: api.DeschedulerStrategy{
+				Enabled: true,
+				Params: &api.StrategyParameters{
+					PodLifeTime: &api.PodLifeTime{
+						MaxPodLifeTimeSeconds: &maxLifeTime,
+						States:                []string{"PodInitializing"},
+					},
+				},
+			},
+			pods: []*v1.Pod{
+				p9,
+				test.BuildTestPod("pod-initializing-stuck", 0, 0, node1.Name, func(pod *v1.Pod) {
+					pod.Status.ContainerStatuses = []v1.ContainerStatus{
+						{
+							State: v1.ContainerState{
+								Waiting: &v1.ContainerStateWaiting{Reason: "PodInitializing"},
+							},
+						},
+					}
+					pod.OwnerReferences = ownerRef1
+					pod.ObjectMeta.CreationTimestamp = olderPodCreationTime
+				}),
+			},
+			nodes:                   []*v1.Node{node1},
+			expectedEvictedPodCount: 1,
+		},
+		{
+			description: "Two old pods with different states. 1 should be evicted.",
+			strategy: api.DeschedulerStrategy{
+				Enabled: true,
+				Params: &api.StrategyParameters{
+					PodLifeTime: &api.PodLifeTime{
+						MaxPodLifeTimeSeconds: &maxLifeTime,
+						States:                []string{"Pending"},
 					},
 				},
 			},
@@ -264,6 +323,46 @@ func TestPodLifeTime(t *testing.T) {
 			nodes:                   []*v1.Node{node1},
 			expectedEvictedPodCount: 0,
 		},
+		{
+			description: "2 Oldest pods should be evicted when maxPodsToEvictPerNode and maxPodsToEvictPerNamespace are not set",
+			strategy: api.DeschedulerStrategy{
+				Enabled: true,
+				Params: &api.StrategyParameters{
+					PodLifeTime: &api.PodLifeTime{MaxPodLifeTimeSeconds: &maxLifeTime},
+				},
+			},
+			pods:                       []*v1.Pod{p1, p2, p9},
+			nodes:                      []*v1.Node{node1},
+			expectedEvictedPodCount:    2,
+			maxPodsToEvictPerNode:      nil,
+			maxPodsToEvictPerNamespace: nil,
+		},
+		{
+			description: "1 Oldest pod should be evicted when maxPodsToEvictPerNamespace is set to 1",
+			strategy: api.DeschedulerStrategy{
+				Enabled: true,
+				Params: &api.StrategyParameters{
+					PodLifeTime: &api.PodLifeTime{MaxPodLifeTimeSeconds: &maxLifeTime},
+				},
+			},
+			pods:                       []*v1.Pod{p1, p2, p9},
+			nodes:                      []*v1.Node{node1},
+			maxPodsToEvictPerNamespace: func(i uint) *uint { return &i }(1),
+			expectedEvictedPodCount:    1,
+		},
+		{
+			description: "1 Oldest pod should be evicted when maxPodsToEvictPerNode is set to 1",
+			strategy: api.DeschedulerStrategy{
+				Enabled: true,
+				Params: &api.StrategyParameters{
+					PodLifeTime: &api.PodLifeTime{MaxPodLifeTimeSeconds: &maxLifeTime},
+				},
+			},
+			pods:                    []*v1.Pod{p1, p2, p9},
+			nodes:                   []*v1.Node{node1},
+			maxPodsToEvictPerNode:   func(i uint) *uint { return &i }(1),
+			expectedEvictedPodCount: 1,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -291,22 +390,29 @@ func TestPodLifeTime(t *testing.T) {
 			sharedInformerFactory.Start(ctx.Done())
 			sharedInformerFactory.WaitForCacheSync(ctx.Done())
 
+			eventRecorder := &events.FakeRecorder{}
+
 			podEvictor := evictions.NewPodEvictor(
 				fakeClient,
 				policyv1.SchemeGroupVersion.String(),
 				false,
-				nil,
-				nil,
+				tc.maxPodsToEvictPerNode,
+				tc.maxPodsToEvictPerNamespace,
+				tc.nodes,
+				false,
+				eventRecorder,
+			)
+
+			evictorFilter := evictions.NewEvictorFilter(
 				tc.nodes,
 				getPodsAssignedToNode,
 				false,
 				false,
 				tc.ignorePvcPods,
 				false,
-				false,
 			)
 
-			PodLifeTime(ctx, fakeClient, tc.strategy, tc.nodes, podEvictor, getPodsAssignedToNode)
+			PodLifeTime(ctx, fakeClient, tc.strategy, tc.nodes, podEvictor, evictorFilter, getPodsAssignedToNode)
 			podsEvicted := podEvictor.TotalEvicted()
 			if podsEvicted != tc.expectedEvictedPodCount {
 				t.Errorf("Test error for description: %s. Expected evicted pods count %v, got %v", tc.description, tc.expectedEvictedPodCount, podsEvicted)

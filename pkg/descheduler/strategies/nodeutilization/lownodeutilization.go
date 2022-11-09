@@ -29,27 +29,17 @@ import (
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
-	"sigs.k8s.io/descheduler/pkg/utils"
 )
 
 // LowNodeUtilization evicts pods from overutilized nodes to underutilized nodes. Note that CPU/Memory requests are used
 // to calculate nodes' utilization and not the actual resource usage.
-func LowNodeUtilization(ctx context.Context, client clientset.Interface, strategy api.DeschedulerStrategy, nodes []*v1.Node, podEvictor *evictions.PodEvictor, getPodsAssignedToNode podutil.GetPodsAssignedToNodeFunc) {
+func LowNodeUtilization(ctx context.Context, client clientset.Interface, strategy api.DeschedulerStrategy, nodes []*v1.Node, podEvictor *evictions.PodEvictor, evictorFilter *evictions.EvictorFilter, getPodsAssignedToNode podutil.GetPodsAssignedToNodeFunc) {
 	// TODO: May be create a struct for the strategy as well, so that we don't have to pass along the all the params?
 	if err := validateNodeUtilizationParams(strategy.Params); err != nil {
 		klog.ErrorS(err, "Invalid LowNodeUtilization parameters")
 		return
 	}
-	thresholdPriority, err := utils.GetPriorityFromStrategyParams(ctx, client, strategy.Params)
-	if err != nil {
-		klog.ErrorS(err, "Failed to get threshold priority from strategy's params")
-		return
-	}
 
-	nodeFit := false
-	if strategy.Params != nil {
-		nodeFit = strategy.Params.NodeFit
-	}
 	useDeviationThresholds := strategy.Params.NodeResourceUtilizationThresholds.UseDeviationThresholds
 	thresholds := strategy.Params.NodeResourceUtilizationThresholds.Thresholds
 	targetThresholds := strategy.Params.NodeResourceUtilizationThresholds.TargetThresholds
@@ -104,32 +94,32 @@ func LowNodeUtilization(ctx context.Context, client clientset.Interface, strateg
 		},
 	)
 
-	// log message in one line
-	keysAndValues := []interface{}{
+	// log message for nodes with low utilization
+	underutilizationCriteria := []interface{}{
 		"CPU", thresholds[v1.ResourceCPU],
 		"Mem", thresholds[v1.ResourceMemory],
 		"Pods", thresholds[v1.ResourcePods],
 	}
 	for name := range thresholds {
 		if !nodeutil.IsBasicResource(name) {
-			keysAndValues = append(keysAndValues, string(name), int64(thresholds[name]))
+			underutilizationCriteria = append(underutilizationCriteria, string(name), int64(thresholds[name]))
 		}
 	}
-	klog.V(1).InfoS("Criteria for a node under utilization", keysAndValues...)
+	klog.V(1).InfoS("Criteria for a node under utilization", underutilizationCriteria...)
 	klog.V(1).InfoS("Number of underutilized nodes", "totalNumber", len(lowNodes))
 
-	// log message in one line
-	keysAndValues = []interface{}{
+	// log message for over utilized nodes
+	overutilizationCriteria := []interface{}{
 		"CPU", targetThresholds[v1.ResourceCPU],
 		"Mem", targetThresholds[v1.ResourceMemory],
 		"Pods", targetThresholds[v1.ResourcePods],
 	}
 	for name := range targetThresholds {
 		if !nodeutil.IsBasicResource(name) {
-			keysAndValues = append(keysAndValues, string(name), int64(targetThresholds[name]))
+			overutilizationCriteria = append(overutilizationCriteria, string(name), int64(targetThresholds[name]))
 		}
 	}
-	klog.V(1).InfoS("Criteria for a node above target utilization", keysAndValues...)
+	klog.V(1).InfoS("Criteria for a node above target utilization", overutilizationCriteria...)
 	klog.V(1).InfoS("Number of overutilized nodes", "totalNumber", len(sourceNodes))
 
 	if len(lowNodes) == 0 {
@@ -151,8 +141,6 @@ func LowNodeUtilization(ctx context.Context, client clientset.Interface, strateg
 		klog.V(1).InfoS("All nodes are under target utilization, nothing to do here")
 		return
 	}
-
-	evictable := podEvictor.Evictable(evictions.WithPriorityThreshold(thresholdPriority), evictions.WithNodeFit(nodeFit))
 
 	// stop if node utilization drops below target threshold or any of required capacity (cpu, memory, pods) is moved
 	continueEvictionCond := func(nodeInfo NodeInfo, totalAvailableUsage map[v1.ResourceName]*resource.Quantity) bool {
@@ -176,7 +164,7 @@ func LowNodeUtilization(ctx context.Context, client clientset.Interface, strateg
 		sourceNodes,
 		lowNodes,
 		podEvictor,
-		evictable.IsEvictable,
+		evictorFilter.Filter,
 		resourceNames,
 		"LowNodeUtilization",
 		continueEvictionCond)

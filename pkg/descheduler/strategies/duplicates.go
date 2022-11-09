@@ -66,15 +66,11 @@ func RemoveDuplicatePods(
 	strategy api.DeschedulerStrategy,
 	nodes []*v1.Node,
 	podEvictor *evictions.PodEvictor,
+	evictorFilter *evictions.EvictorFilter,
 	getPodsAssignedToNode podutil.GetPodsAssignedToNodeFunc,
 ) {
 	if err := validateRemoveDuplicatePodsParams(strategy.Params); err != nil {
 		klog.ErrorS(err, "Invalid RemoveDuplicatePods parameters")
-		return
-	}
-	thresholdPriority, err := utils.GetPriorityFromStrategyParams(ctx, client, strategy.Params)
-	if err != nil {
-		klog.ErrorS(err, "Failed to get threshold priority from strategy's params")
 		return
 	}
 
@@ -84,20 +80,13 @@ func RemoveDuplicatePods(
 		excludedNamespaces = sets.NewString(strategy.Params.Namespaces.Exclude...)
 	}
 
-	nodeFit := false
-	if strategy.Params != nil {
-		nodeFit = strategy.Params.NodeFit
-	}
-
-	evictable := podEvictor.Evictable(evictions.WithPriorityThreshold(thresholdPriority), evictions.WithNodeFit(nodeFit))
-
 	duplicatePods := make(map[podOwner]map[string][]*v1.Pod)
 	ownerKeyOccurence := make(map[podOwner]int32)
 	nodeCount := 0
 	nodeMap := make(map[string]*v1.Node)
 
 	podFilter, err := podutil.NewOptions().
-		WithFilter(evictable.IsEvictable).
+		WithFilter(evictorFilter.Filter).
 		WithNamespaces(includedNamespaces).
 		WithoutNamespaces(excludedNamespaces).
 		BuildFilterFunc()
@@ -203,6 +192,7 @@ func RemoveDuplicatePods(
 		}
 
 		upperAvg := int(math.Ceil(float64(ownerKeyOccurence[ownerKey]) / float64(len(targetNodes))))
+	loop:
 		for nodeName, pods := range podNodes {
 			klog.V(2).InfoS("Average occurrence per node", "node", klog.KObj(nodeMap[nodeName]), "ownerKey", ownerKey, "avg", upperAvg)
 			// list of duplicated pods does not contain the original referential pod
@@ -210,9 +200,9 @@ func RemoveDuplicatePods(
 				// It's assumed all duplicated pods are in the same priority class
 				// TODO(jchaloup): check if the pod has a different node to lend to
 				for _, pod := range pods[upperAvg-1:] {
-					if _, err := podEvictor.EvictPod(ctx, pod, nodeMap[nodeName], "RemoveDuplicatePods"); err != nil {
-						klog.ErrorS(err, "Error evicting pod", "pod", klog.KObj(pod))
-						break
+					podEvictor.EvictPod(ctx, pod, evictions.EvictOptions{})
+					if podEvictor.NodeLimitExceeded(nodeMap[nodeName]) {
+						continue loop
 					}
 				}
 			}

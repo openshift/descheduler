@@ -105,17 +105,17 @@ See the [resources | Kustomize](https://kubectl.docs.kubernetes.io/references/ku
 
 Run As A Job
 ```
-kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/job?ref=v0.24.0' | kubectl apply -f -
+kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/job?ref=v0.24.1' | kubectl apply -f -
 ```
 
 Run As A CronJob
 ```
-kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/cronjob?ref=v0.24.0' | kubectl apply -f -
+kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/cronjob?ref=v0.24.1' | kubectl apply -f -
 ```
 
 Run As A Deployment
 ```
-kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/deployment?ref=v0.24.0' | kubectl apply -f -
+kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/deployment?ref=v0.24.1' | kubectl apply -f -
 ```
 
 ## User Guide
@@ -524,15 +524,17 @@ strategies:
 
 This strategy evicts pods that are older than `maxPodLifeTimeSeconds`.
 
-You can also specify `podStatusPhases` to `only` evict pods with specific `StatusPhases`, currently this parameter is limited
-to `Running` and `Pending`.
+You can also specify `states` parameter to **only** evict pods matching the following conditions:
+  - [Pod Phase](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-phase) status of: `Running`, `Pending`
+  - [Container State Waiting](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-state-waiting) condition of: `PodInitializing`, `ContainerCreating`
 
 **Parameters:**
 
 |Name|Type|
 |---|---|
 |`maxPodLifeTimeSeconds`|int|
-|`podStatusPhases`|list(string)|
+|`podStatusPhases` (**Deprecated**. Use `states` instead)|list(string)|
+|`states`|list(string)|
 |`thresholdPriority`|int (see [priority filtering](#priority-filtering))|
 |`thresholdPriorityClassName`|string (see [priority filtering](#priority-filtering))|
 |`namespaces`|(see [namespace filtering](#namespace-filtering))|
@@ -549,8 +551,9 @@ strategies:
      params:
        podLifeTime:
          maxPodLifeTimeSeconds: 86400
-         podStatusPhases:
+         states:
          - "Pending"
+         - "PodInitializing"
 ```
 
 ### RemoveFailedPods
@@ -751,6 +754,7 @@ strategies:
   "LowNodeUtilization":
     enabled: true
     params:
+      nodeFit: true
       nodeResourceUtilizationThresholds:
         thresholds:
           "cpu": 20
@@ -760,7 +764,6 @@ strategies:
           "cpu": 50
           "memory": 50
           "pods": 50
-        nodeFit: true
 ```
 
 Note that node fit filtering references the current pod spec, and not that of it's owner.

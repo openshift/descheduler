@@ -19,7 +19,6 @@ package evictions
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	v1 "k8s.io/api/core/v1"
 	policy "k8s.io/api/policy/v1beta1"
@@ -28,9 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/errors"
 	clientset "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
-	clientcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/descheduler/metrics"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
@@ -45,24 +42,20 @@ const (
 )
 
 // nodePodEvictedCount keeps count of pods evicted on node
-type nodePodEvictedCount map[*v1.Node]uint
+type nodePodEvictedCount map[string]uint
 type namespacePodEvictCount map[string]uint
 
 type PodEvictor struct {
 	client                     clientset.Interface
 	nodes                      []*v1.Node
-	nodeIndexer                podutil.GetPodsAssignedToNodeFunc
 	policyGroupVersion         string
 	dryRun                     bool
 	maxPodsToEvictPerNode      *uint
 	maxPodsToEvictPerNamespace *uint
 	nodepodCount               nodePodEvictedCount
 	namespacePodCount          namespacePodEvictCount
-	evictFailedBarePods        bool
-	evictLocalStoragePods      bool
-	evictSystemCriticalPods    bool
-	ignorePvcPods              bool
 	metricsEnabled             bool
+	eventRecorder              events.EventRecorder
 }
 
 func NewPodEvictor(
@@ -72,41 +65,33 @@ func NewPodEvictor(
 	maxPodsToEvictPerNode *uint,
 	maxPodsToEvictPerNamespace *uint,
 	nodes []*v1.Node,
-	nodeIndexer podutil.GetPodsAssignedToNodeFunc,
-	evictLocalStoragePods bool,
-	evictSystemCriticalPods bool,
-	ignorePvcPods bool,
-	evictFailedBarePods bool,
 	metricsEnabled bool,
+	eventRecorder events.EventRecorder,
 ) *PodEvictor {
 	var nodePodCount = make(nodePodEvictedCount)
 	var namespacePodCount = make(namespacePodEvictCount)
 	for _, node := range nodes {
 		// Initialize podsEvicted till now with 0.
-		nodePodCount[node] = 0
+		nodePodCount[node.Name] = 0
 	}
 
 	return &PodEvictor{
 		client:                     client,
 		nodes:                      nodes,
-		nodeIndexer:                nodeIndexer,
 		policyGroupVersion:         policyGroupVersion,
 		dryRun:                     dryRun,
 		maxPodsToEvictPerNode:      maxPodsToEvictPerNode,
 		maxPodsToEvictPerNamespace: maxPodsToEvictPerNamespace,
 		nodepodCount:               nodePodCount,
 		namespacePodCount:          namespacePodCount,
-		evictLocalStoragePods:      evictLocalStoragePods,
-		evictSystemCriticalPods:    evictSystemCriticalPods,
-		evictFailedBarePods:        evictFailedBarePods,
-		ignorePvcPods:              ignorePvcPods,
 		metricsEnabled:             metricsEnabled,
+		eventRecorder:              eventRecorder,
 	}
 }
 
 // NodeEvicted gives a number of pods evicted for node
 func (pe *PodEvictor) NodeEvicted(node *v1.Node) uint {
-	return pe.nodepodCount[node]
+	return pe.nodepodCount[node.Name]
 }
 
 // TotalEvicted gives a number of pods evicted through all nodes
@@ -118,56 +103,80 @@ func (pe *PodEvictor) TotalEvicted() uint {
 	return total
 }
 
-// EvictPod returns non-nil error only when evicting a pod on a node is not
-// possible (due to maxPodsToEvictPerNode constraint). Success is true when the pod
-// is evicted on the server side.
-func (pe *PodEvictor) EvictPod(ctx context.Context, pod *v1.Pod, node *v1.Node, strategy string, reasons ...string) (bool, error) {
-	reason := strategy
-	if len(reasons) > 0 {
-		reason += " (" + strings.Join(reasons, ", ") + ")"
+// NodeLimitExceeded checks if the number of evictions for a node was exceeded
+func (pe *PodEvictor) NodeLimitExceeded(node *v1.Node) bool {
+	if pe.maxPodsToEvictPerNode != nil {
+		return pe.nodepodCount[node.Name] == *pe.maxPodsToEvictPerNode
 	}
-	if pe.maxPodsToEvictPerNode != nil && pe.nodepodCount[node]+1 > *pe.maxPodsToEvictPerNode {
-		if pe.metricsEnabled {
-			metrics.PodsEvicted.With(map[string]string{"result": "maximum number of pods per node reached", "strategy": strategy, "namespace": pod.Namespace, "node": node.Name}).Inc()
+	return false
+}
+
+// EvictOptions provides a handle for passing additional info to EvictPod
+type EvictOptions struct {
+	// Reason allows for passing details about the specific eviction for logging.
+	Reason string
+}
+
+// EvictPod evicts a pod while exercising eviction limits.
+// Returns true when the pod is evicted on the server side.
+func (pe *PodEvictor) EvictPod(ctx context.Context, pod *v1.Pod, opts EvictOptions) bool {
+	// TODO: Replace context-propagated Strategy name with a defined framework handle for accessing Strategy info
+	strategy := ""
+	if ctx.Value("strategyName") != nil {
+		strategy = ctx.Value("strategyName").(string)
+	}
+
+	if pod.Spec.NodeName != "" {
+		if pe.maxPodsToEvictPerNode != nil && pe.nodepodCount[pod.Spec.NodeName]+1 > *pe.maxPodsToEvictPerNode {
+			if pe.metricsEnabled {
+				metrics.PodsEvicted.With(map[string]string{"result": "maximum number of pods per node reached", "strategy": strategy, "namespace": pod.Namespace, "node": pod.Spec.NodeName}).Inc()
+			}
+			klog.ErrorS(fmt.Errorf("Maximum number of evicted pods per node reached"), "limit", *pe.maxPodsToEvictPerNode, "node", pod.Spec.NodeName)
+			return false
 		}
-		return false, fmt.Errorf("Maximum number %v of evicted pods per %q node reached", *pe.maxPodsToEvictPerNode, node.Name)
 	}
 
 	if pe.maxPodsToEvictPerNamespace != nil && pe.namespacePodCount[pod.Namespace]+1 > *pe.maxPodsToEvictPerNamespace {
 		if pe.metricsEnabled {
-			metrics.PodsEvicted.With(map[string]string{"result": "maximum number of pods per namespace reached", "strategy": strategy, "namespace": pod.Namespace, "node": node.Name}).Inc()
+			metrics.PodsEvicted.With(map[string]string{"result": "maximum number of pods per namespace reached", "strategy": strategy, "namespace": pod.Namespace, "node": pod.Spec.NodeName}).Inc()
 		}
-		return false, fmt.Errorf("Maximum number %v of evicted pods per %q namespace reached", *pe.maxPodsToEvictPerNamespace, pod.Namespace)
+		klog.ErrorS(fmt.Errorf("Maximum number of evicted pods per namespace reached"), "limit", *pe.maxPodsToEvictPerNamespace, "namespace", pod.Namespace)
+		return false
 	}
 
 	err := evictPod(ctx, pe.client, pod, pe.policyGroupVersion)
 	if err != nil {
 		// err is used only for logging purposes
-		klog.ErrorS(err, "Error evicting pod", "pod", klog.KObj(pod), "reason", reason)
+		klog.ErrorS(err, "Error evicting pod", "pod", klog.KObj(pod), "reason", opts.Reason)
 		if pe.metricsEnabled {
-			metrics.PodsEvicted.With(map[string]string{"result": "error", "strategy": strategy, "namespace": pod.Namespace, "node": node.Name}).Inc()
+			metrics.PodsEvicted.With(map[string]string{"result": "error", "strategy": strategy, "namespace": pod.Namespace, "node": pod.Spec.NodeName}).Inc()
 		}
-		return false, nil
+		return false
 	}
 
-	pe.nodepodCount[node]++
+	if pod.Spec.NodeName != "" {
+		pe.nodepodCount[pod.Spec.NodeName]++
+	}
 	pe.namespacePodCount[pod.Namespace]++
 
 	if pe.metricsEnabled {
-		metrics.PodsEvicted.With(map[string]string{"result": "success", "strategy": strategy, "namespace": pod.Namespace, "node": node.Name}).Inc()
+		metrics.PodsEvicted.With(map[string]string{"result": "success", "strategy": strategy, "namespace": pod.Namespace, "node": pod.Spec.NodeName}).Inc()
 	}
 
 	if pe.dryRun {
-		klog.V(1).InfoS("Evicted pod in dry run mode", "pod", klog.KObj(pod), "reason", reason, "strategy", strategy, "node", node.Name)
+		klog.V(1).InfoS("Evicted pod in dry run mode", "pod", klog.KObj(pod), "reason", opts.Reason, "strategy", strategy, "node", pod.Spec.NodeName)
 	} else {
-		klog.V(1).InfoS("Evicted pod", "pod", klog.KObj(pod), "reason", reason, "strategy", strategy, "node", node.Name)
-		eventBroadcaster := record.NewBroadcaster()
-		eventBroadcaster.StartStructuredLogging(3)
-		eventBroadcaster.StartRecordingToSink(&clientcorev1.EventSinkImpl{Interface: pe.client.CoreV1().Events(pod.Namespace)})
-		r := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "sigs.k8s.io.descheduler"})
-		r.Event(pod, v1.EventTypeNormal, "Descheduled", fmt.Sprintf("pod evicted by sigs.k8s.io/descheduler%s", reason))
+		klog.V(1).InfoS("Evicted pod", "pod", klog.KObj(pod), "reason", opts.Reason, "strategy", strategy, "node", pod.Spec.NodeName)
+		reason := opts.Reason
+		if len(reason) == 0 {
+			reason = strategy
+			if len(reason) == 0 {
+				reason = "NotSet"
+			}
+		}
+		pe.eventRecorder.Eventf(pod, nil, v1.EventTypeNormal, reason, "Descheduled", "pod evicted by sigs.k8s.io/descheduler")
 	}
-	return true, nil
+	return true
 }
 
 func evictPod(ctx context.Context, client clientset.Interface, pod *v1.Pod, policyGroupVersion string) error {
@@ -230,21 +239,26 @@ func WithLabelSelector(labelSelector labels.Selector) func(opts *Options) {
 
 type constraint func(pod *v1.Pod) error
 
-type evictable struct {
+type EvictorFilter struct {
 	constraints []constraint
 }
 
-// Evictable provides an implementation of IsEvictable(IsEvictable(pod *v1.Pod) bool).
-// The method accepts a list of options which allow to extend constraints
-// which decides when a pod is considered evictable.
-func (pe *PodEvictor) Evictable(opts ...func(opts *Options)) *evictable {
+func NewEvictorFilter(
+	nodes []*v1.Node,
+	nodeIndexer podutil.GetPodsAssignedToNodeFunc,
+	evictLocalStoragePods bool,
+	evictSystemCriticalPods bool,
+	ignorePvcPods bool,
+	evictFailedBarePods bool,
+	opts ...func(opts *Options),
+) *EvictorFilter {
 	options := &Options{}
 	for _, opt := range opts {
 		opt(options)
 	}
 
-	ev := &evictable{}
-	if pe.evictFailedBarePods {
+	ev := &EvictorFilter{}
+	if evictFailedBarePods {
 		ev.constraints = append(ev.constraints, func(pod *v1.Pod) error {
 			ownerRefList := podutil.OwnerRef(pod)
 			// Enable evictFailedBarePods to evict bare pods in failed phase
@@ -263,7 +277,7 @@ func (pe *PodEvictor) Evictable(opts ...func(opts *Options)) *evictable {
 			return nil
 		})
 	}
-	if !pe.evictSystemCriticalPods {
+	if !evictSystemCriticalPods {
 		ev.constraints = append(ev.constraints, func(pod *v1.Pod) error {
 			// Moved from IsEvictable function to allow for disabling
 			if utils.IsCriticalPriorityPod(pod) {
@@ -281,7 +295,7 @@ func (pe *PodEvictor) Evictable(opts ...func(opts *Options)) *evictable {
 			})
 		}
 	}
-	if !pe.evictLocalStoragePods {
+	if !evictLocalStoragePods {
 		ev.constraints = append(ev.constraints, func(pod *v1.Pod) error {
 			if utils.IsPodWithLocalStorage(pod) {
 				return fmt.Errorf("pod has local storage and descheduler is not configured with evictLocalStoragePods")
@@ -289,7 +303,7 @@ func (pe *PodEvictor) Evictable(opts ...func(opts *Options)) *evictable {
 			return nil
 		})
 	}
-	if pe.ignorePvcPods {
+	if ignorePvcPods {
 		ev.constraints = append(ev.constraints, func(pod *v1.Pod) error {
 			if utils.IsPodWithPVC(pod) {
 				return fmt.Errorf("pod has a PVC and descheduler is configured to ignore PVC pods")
@@ -299,7 +313,7 @@ func (pe *PodEvictor) Evictable(opts ...func(opts *Options)) *evictable {
 	}
 	if options.nodeFit {
 		ev.constraints = append(ev.constraints, func(pod *v1.Pod) error {
-			if !nodeutil.PodFitsAnyOtherNode(pe.nodeIndexer, pod, pe.nodes) {
+			if !nodeutil.PodFitsAnyOtherNode(nodeIndexer, pod, nodes) {
 				return fmt.Errorf("pod does not fit on any other node because of nodeSelector(s), Taint(s), or nodes marked as unschedulable")
 			}
 			return nil
@@ -318,7 +332,7 @@ func (pe *PodEvictor) Evictable(opts ...func(opts *Options)) *evictable {
 }
 
 // IsEvictable decides when a pod is evictable
-func (ev *evictable) IsEvictable(pod *v1.Pod) bool {
+func (ef *EvictorFilter) Filter(pod *v1.Pod) bool {
 	checkErrs := []error{}
 
 	ownerRefList := podutil.OwnerRef(pod)
@@ -338,7 +352,7 @@ func (ev *evictable) IsEvictable(pod *v1.Pod) bool {
 		checkErrs = append(checkErrs, fmt.Errorf("pod is terminating"))
 	}
 
-	for _, c := range ev.constraints {
+	for _, c := range ef.constraints {
 		if err := c(pod); err != nil {
 			checkErrs = append(checkErrs, err)
 		}

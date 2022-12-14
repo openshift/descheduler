@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/events"
 
 	"sigs.k8s.io/descheduler/pkg/api"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
@@ -211,6 +212,8 @@ func TestPodAntiAffinity(t *testing.T) {
 			sharedInformerFactory.Start(ctx.Done())
 			sharedInformerFactory.WaitForCacheSync(ctx.Done())
 
+			eventRecorder := &events.FakeRecorder{}
+
 			podEvictor := evictions.NewPodEvictor(
 				fakeClient,
 				policyv1.SchemeGroupVersion.String(),
@@ -218,12 +221,8 @@ func TestPodAntiAffinity(t *testing.T) {
 				test.maxPodsToEvictPerNode,
 				test.maxNoOfPodsToEvictPerNamespace,
 				test.nodes,
-				getPodsAssignedToNode,
 				false,
-				false,
-				false,
-				false,
-				false,
+				eventRecorder,
 			)
 			strategy := api.DeschedulerStrategy{
 				Params: &api.StrategyParameters{
@@ -231,7 +230,17 @@ func TestPodAntiAffinity(t *testing.T) {
 				},
 			}
 
-			RemovePodsViolatingInterPodAntiAffinity(ctx, fakeClient, strategy, test.nodes, podEvictor, getPodsAssignedToNode)
+			evictorFilter := evictions.NewEvictorFilter(
+				test.nodes,
+				getPodsAssignedToNode,
+				false,
+				false,
+				false,
+				false,
+				evictions.WithNodeFit(test.nodeFit),
+			)
+
+			RemovePodsViolatingInterPodAntiAffinity(ctx, fakeClient, strategy, test.nodes, podEvictor, evictorFilter, getPodsAssignedToNode)
 			podsEvicted := podEvictor.TotalEvicted()
 			if podsEvicted != test.expectedEvictedPodCount {
 				t.Errorf("Unexpected no of pods evicted: pods evicted: %d, expected: %d", podsEvicted, test.expectedEvictedPodCount)

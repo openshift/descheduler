@@ -19,6 +19,7 @@ package strategies
 import (
 	"context"
 	"math"
+	"reflect"
 	"sort"
 
 	v1 "k8s.io/api/core/v1"
@@ -46,12 +47,14 @@ type topology struct {
 	pods []*v1.Pod
 }
 
+// nolint: gocyclo
 func RemovePodsViolatingTopologySpreadConstraint(
 	ctx context.Context,
 	client clientset.Interface,
 	strategy api.DeschedulerStrategy,
 	nodes []*v1.Node,
 	podEvictor *evictions.PodEvictor,
+	evictorFilter *evictions.EvictorFilter,
 	getPodsAssignedToNode podutil.GetPodsAssignedToNodeFunc,
 ) {
 	strategyParams, err := validation.ValidateAndParseStrategyParams(ctx, client, strategy.Params)
@@ -60,11 +63,13 @@ func RemovePodsViolatingTopologySpreadConstraint(
 		return
 	}
 
-	evictable := podEvictor.Evictable(
-		evictions.WithPriorityThreshold(strategyParams.ThresholdPriority),
-		evictions.WithNodeFit(strategyParams.NodeFit),
-		evictions.WithLabelSelector(strategyParams.LabelSelector),
-	)
+	isEvictable := evictorFilter.Filter
+
+	if strategyParams.LabelSelector != nil && !strategyParams.LabelSelector.Empty() {
+		isEvictable = podutil.WrapFilterFuncs(isEvictable, func(pod *v1.Pod) bool {
+			return strategyParams.LabelSelector.Matches(labels.Set(pod.Labels))
+		})
+	}
 
 	nodeMap := make(map[string]*v1.Node, len(nodes))
 	for _, node := range nodes {
@@ -104,14 +109,20 @@ func RemovePodsViolatingTopologySpreadConstraint(
 		}
 
 		// ...where there is a topology constraint
-		namespaceTopologySpreadConstraints := make(map[v1.TopologySpreadConstraint]struct{})
+		namespaceTopologySpreadConstraints := []v1.TopologySpreadConstraint{}
 		for _, pod := range namespacePods.Items {
 			for _, constraint := range pod.Spec.TopologySpreadConstraints {
 				// Ignore soft topology constraints if they are not included
 				if constraint.WhenUnsatisfiable == v1.ScheduleAnyway && (strategy.Params == nil || !strategy.Params.IncludeSoftConstraints) {
 					continue
 				}
-				namespaceTopologySpreadConstraints[constraint] = struct{}{}
+				// Need to check v1.TopologySpreadConstraint deepEquality because
+				// v1.TopologySpreadConstraint has pointer fields
+				// and we don't need to go over duplicated constraints later on
+				if hasIdenticalConstraints(constraint, namespaceTopologySpreadConstraints) {
+					continue
+				}
+				namespaceTopologySpreadConstraints = append(namespaceTopologySpreadConstraints, constraint)
 			}
 		}
 		if len(namespaceTopologySpreadConstraints) == 0 {
@@ -119,7 +130,7 @@ func RemovePodsViolatingTopologySpreadConstraint(
 		}
 
 		// 2. for each topologySpreadConstraint in that namespace
-		for constraint := range namespaceTopologySpreadConstraints {
+		for _, constraint := range namespaceTopologySpreadConstraints {
 			constraintTopologies := make(map[topologyPair][]*v1.Pod)
 			// pre-populate the topologyPair map with all the topologies available from the nodeMap
 			// (we can't just build it from existing pods' nodes because a topology may have 0 pods)
@@ -148,7 +159,7 @@ func RemovePodsViolatingTopologySpreadConstraint(
 					continue
 				}
 
-				// 5. If the pod's node matches this constraint'selector topologyKey, create a topoPair and add the pod
+				// 5. If the pod's node matches this constraint's topologyKey, create a topoPair and add the pod
 				node, ok := nodeMap[namespacePods.Items[i].Spec.NodeName]
 				if !ok {
 					// If ok is false, node is nil in which case node.Labels will panic. In which case a pod is yet to be scheduled. So it's safe to just continue here.
@@ -168,19 +179,33 @@ func RemovePodsViolatingTopologySpreadConstraint(
 				klog.V(2).InfoS("Skipping topology constraint because it is already balanced", "constraint", constraint)
 				continue
 			}
-			balanceDomains(client, getPodsAssignedToNode, podsForEviction, constraint, constraintTopologies, sumPods, evictable.IsEvictable, nodes)
+			balanceDomains(getPodsAssignedToNode, podsForEviction, constraint, constraintTopologies, sumPods, evictorFilter.Filter, nodes)
 		}
 	}
 
+	nodeLimitExceeded := map[string]bool{}
 	for pod := range podsForEviction {
-		if !evictable.IsEvictable(pod) {
+		if nodeLimitExceeded[pod.Spec.NodeName] {
 			continue
 		}
-		if _, err := podEvictor.EvictPod(ctx, pod, nodeMap[pod.Spec.NodeName], "PodTopologySpread"); err != nil {
-			klog.ErrorS(err, "Error evicting pod", "pod", klog.KObj(pod))
-			break
+		if !isEvictable(pod) {
+			continue
+		}
+		podEvictor.EvictPod(ctx, pod, evictions.EvictOptions{})
+		if podEvictor.NodeLimitExceeded(nodeMap[pod.Spec.NodeName]) {
+			nodeLimitExceeded[pod.Spec.NodeName] = true
 		}
 	}
+}
+
+// hasIdenticalConstraints checks if we already had an identical TopologySpreadConstraint in namespaceTopologySpreadConstraints slice
+func hasIdenticalConstraints(newConstraint v1.TopologySpreadConstraint, namespaceTopologySpreadConstraints []v1.TopologySpreadConstraint) bool {
+	for _, constraint := range namespaceTopologySpreadConstraints {
+		if reflect.DeepEqual(newConstraint, constraint) {
+			return true
+		}
+	}
+	return false
 }
 
 // topologyIsBalanced checks if any domains in the topology differ by more than the MaxSkew
@@ -215,7 +240,7 @@ func topologyIsBalanced(topology map[topologyPair][]*v1.Pod, constraint v1.Topol
 // whichever number is less.
 //
 // (Note, we will only move as many pods from a domain as possible without bringing it below the ideal average,
-//  and we will not bring any smaller domain above the average)
+// and we will not bring any smaller domain above the average)
 // If the diff is within the skew, we move to the next highest domain.
 // If the higher domain can't give any more without falling below the average, we move to the next lowest "high" domain
 //
@@ -223,7 +248,6 @@ func topologyIsBalanced(topology map[topologyPair][]*v1.Pod, constraint v1.Topol
 // [5, 5, 5, 5, 5, 5]
 // (assuming even distribution by the scheduler of the evicted pods)
 func balanceDomains(
-	client clientset.Interface,
 	getPodsAssignedToNode podutil.GetPodsAssignedToNodeFunc,
 	podsForEviction map[*v1.Pod]struct{},
 	constraint v1.TopologySpreadConstraint,
@@ -234,6 +258,9 @@ func balanceDomains(
 
 	idealAvg := sumPods / float64(len(constraintTopologies))
 	sortedDomains := sortDomains(constraintTopologies, isEvictable)
+
+	nodesBelowIdealAvg := filterNodesBelowIdealAvg(nodes, sortedDomains, constraint.TopologyKey, idealAvg)
+
 	// i is the index for belowOrEqualAvg
 	// j is the index for aboveAvg
 	i := 0
@@ -284,7 +311,8 @@ func balanceDomains(
 			// In other words, PTS can perform suboptimally if some of its chosen pods don't fit on other nodes.
 			// This is because the chosen pods aren't sorted, but immovable pods still count as "evicted" toward the PTS algorithm.
 			// So, a better selection heuristic could improve performance.
-			if !node.PodFitsAnyOtherNode(getPodsAssignedToNode, aboveToEvict[k], nodes) {
+
+			if !node.PodFitsAnyOtherNode(getPodsAssignedToNode, aboveToEvict[k], nodesBelowIdealAvg) {
 				klog.V(2).InfoS("ignoring pod for eviction as it does not fit on any other node", "pod", klog.KObj(aboveToEvict[k]))
 				continue
 			}
@@ -294,6 +322,25 @@ func balanceDomains(
 		sortedDomains[j].pods = sortedDomains[j].pods[:len(sortedDomains[j].pods)-movePods]
 		sortedDomains[i].pods = append(sortedDomains[i].pods, aboveToEvict...)
 	}
+}
+
+// filterNodesBelowIdealAvg will return nodes that have fewer pods matching topology domain than the idealAvg count.
+// the desired behavior is to not consider nodes in a given topology domain that are already packed.
+func filterNodesBelowIdealAvg(nodes []*v1.Node, sortedDomains []topology, topologyKey string, idealAvg float64) []*v1.Node {
+	topologyNodesMap := make(map[string][]*v1.Node, len(sortedDomains))
+	for _, node := range nodes {
+		if topologyDomain, ok := node.Labels[topologyKey]; ok {
+			topologyNodesMap[topologyDomain] = append(topologyNodesMap[topologyDomain], node)
+		}
+	}
+
+	var nodesBelowIdealAvg []*v1.Node
+	for _, domain := range sortedDomains {
+		if float64(len(domain.pods)) < idealAvg {
+			nodesBelowIdealAvg = append(nodesBelowIdealAvg, topologyNodesMap[domain.pair.value]...)
+		}
+	}
+	return nodesBelowIdealAvg
 }
 
 // sortDomains sorts and splits the list of topology domains based on their size

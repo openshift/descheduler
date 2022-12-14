@@ -49,7 +49,7 @@ func validateRemovePodsViolatingInterPodAntiAffinityParams(params *api.StrategyP
 }
 
 // RemovePodsViolatingInterPodAntiAffinity evicts pods on the node which are having a pod affinity rules.
-func RemovePodsViolatingInterPodAntiAffinity(ctx context.Context, client clientset.Interface, strategy api.DeschedulerStrategy, nodes []*v1.Node, podEvictor *evictions.PodEvictor, getPodsAssignedToNode podutil.GetPodsAssignedToNodeFunc) {
+func RemovePodsViolatingInterPodAntiAffinity(ctx context.Context, client clientset.Interface, strategy api.DeschedulerStrategy, nodes []*v1.Node, podEvictor *evictions.PodEvictor, evictorFilter *evictions.EvictorFilter, getPodsAssignedToNode podutil.GetPodsAssignedToNodeFunc) {
 	if err := validateRemovePodsViolatingInterPodAntiAffinityParams(strategy.Params); err != nil {
 		klog.ErrorS(err, "Invalid RemovePodsViolatingInterPodAntiAffinity parameters")
 		return
@@ -65,19 +65,6 @@ func RemovePodsViolatingInterPodAntiAffinity(ctx context.Context, client clients
 		labelSelector = strategy.Params.LabelSelector
 	}
 
-	thresholdPriority, err := utils.GetPriorityFromStrategyParams(ctx, client, strategy.Params)
-	if err != nil {
-		klog.ErrorS(err, "Failed to get threshold priority from strategy's params")
-		return
-	}
-
-	nodeFit := false
-	if strategy.Params != nil {
-		nodeFit = strategy.Params.NodeFit
-	}
-
-	evictable := podEvictor.Evictable(evictions.WithPriorityThreshold(thresholdPriority), evictions.WithNodeFit(nodeFit))
-
 	podFilter, err := podutil.NewOptions().
 		WithNamespaces(includedNamespaces).
 		WithoutNamespaces(excludedNamespaces).
@@ -88,6 +75,7 @@ func RemovePodsViolatingInterPodAntiAffinity(ctx context.Context, client clients
 		return
 	}
 
+loop:
 	for _, node := range nodes {
 		klog.V(1).InfoS("Processing node", "node", klog.KObj(node))
 		pods, err := podutil.ListPodsOnANode(node.Name, getPodsAssignedToNode, podFilter)
@@ -98,14 +86,8 @@ func RemovePodsViolatingInterPodAntiAffinity(ctx context.Context, client clients
 		podutil.SortPodsBasedOnPriorityLowToHigh(pods)
 		totalPods := len(pods)
 		for i := 0; i < totalPods; i++ {
-			if checkPodsWithAntiAffinityExist(pods[i], pods) && evictable.IsEvictable(pods[i]) {
-				success, err := podEvictor.EvictPod(ctx, pods[i], node, "InterPodAntiAffinity")
-				if err != nil {
-					klog.ErrorS(err, "Error evicting pod")
-					break
-				}
-
-				if success {
+			if checkPodsWithAntiAffinityExist(pods[i], pods) && evictorFilter.Filter(pods[i]) {
+				if podEvictor.EvictPod(ctx, pods[i], evictions.EvictOptions{}) {
 					// Since the current pod is evicted all other pods which have anti-affinity with this
 					// pod need not be evicted.
 					// Update pods.
@@ -113,6 +95,9 @@ func RemovePodsViolatingInterPodAntiAffinity(ctx context.Context, client clients
 					i--
 					totalPods--
 				}
+			}
+			if podEvictor.NodeLimitExceeded(node) {
+				continue loop
 			}
 		}
 	}

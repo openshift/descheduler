@@ -33,6 +33,7 @@ func RemoveFailedPods(
 	strategy api.DeschedulerStrategy,
 	nodes []*v1.Node,
 	podEvictor *evictions.PodEvictor,
+	evictorFilter *evictions.EvictorFilter,
 	getPodsAssignedToNode podutil.GetPodsAssignedToNodeFunc,
 ) {
 	strategyParams, err := validateAndParseRemoveFailedPodsParams(ctx, client, strategy.Params)
@@ -41,19 +42,13 @@ func RemoveFailedPods(
 		return
 	}
 
-	evictable := podEvictor.Evictable(
-		evictions.WithPriorityThreshold(strategyParams.ThresholdPriority),
-		evictions.WithNodeFit(strategyParams.NodeFit),
-		evictions.WithLabelSelector(strategyParams.LabelSelector),
-	)
-
 	var labelSelector *metav1.LabelSelector
 	if strategy.Params != nil {
 		labelSelector = strategy.Params.LabelSelector
 	}
 
 	podFilter, err := podutil.NewOptions().
-		WithFilter(evictable.IsEvictable).
+		WithFilter(evictorFilter.Filter).
 		WithNamespaces(strategyParams.IncludedNamespaces).
 		WithoutNamespaces(strategyParams.ExcludedNamespaces).
 		WithLabelSelector(labelSelector).
@@ -80,9 +75,9 @@ func RemoveFailedPods(
 				continue
 			}
 
-			if _, err = podEvictor.EvictPod(ctx, pods[i], node, "FailedPod"); err != nil {
-				klog.ErrorS(err, "Error evicting pod", "pod", klog.KObj(pod))
-				break
+			podEvictor.EvictPod(ctx, pods[i], evictions.EvictOptions{})
+			if podEvictor.NodeLimitExceeded(node) {
+				continue
 			}
 		}
 	}

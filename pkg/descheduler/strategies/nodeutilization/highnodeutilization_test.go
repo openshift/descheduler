@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	core "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/events"
 
 	"sigs.k8s.io/descheduler/pkg/api"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
@@ -500,6 +501,8 @@ func TestHighNodeUtilization(t *testing.T) {
 			//	return true, nil, fmt.Errorf("Wrong node: %v", getAction.GetName())
 			//})
 
+			eventRecorder := &events.FakeRecorder{}
+
 			podEvictor := evictions.NewPodEvictor(
 				fakeClient,
 				"v1",
@@ -507,12 +510,8 @@ func TestHighNodeUtilization(t *testing.T) {
 				nil,
 				nil,
 				testCase.nodes,
-				getPodsAssignedToNode,
 				false,
-				false,
-				false,
-				false,
-				false,
+				eventRecorder,
 			)
 
 			strategy := api.DeschedulerStrategy{
@@ -524,7 +523,18 @@ func TestHighNodeUtilization(t *testing.T) {
 					NodeFit: true,
 				},
 			}
-			HighNodeUtilization(ctx, fakeClient, strategy, testCase.nodes, podEvictor, getPodsAssignedToNode)
+
+			evictorFilter := evictions.NewEvictorFilter(
+				testCase.nodes,
+				getPodsAssignedToNode,
+				false,
+				false,
+				false,
+				false,
+				evictions.WithNodeFit(strategy.Params.NodeFit),
+			)
+
+			HighNodeUtilization(ctx, fakeClient, strategy, testCase.nodes, podEvictor, evictorFilter, getPodsAssignedToNode)
 
 			podsEvicted := podEvictor.TotalEvicted()
 			if testCase.expectedPodsEvicted != podsEvicted {
@@ -706,6 +716,8 @@ func TestHighNodeUtilizationWithTaints(t *testing.T) {
 			sharedInformerFactory.Start(ctx.Done())
 			sharedInformerFactory.WaitForCacheSync(ctx.Done())
 
+			eventRecorder := &events.FakeRecorder{}
+
 			podEvictor := evictions.NewPodEvictor(
 				fakeClient,
 				"policy/v1",
@@ -713,15 +725,20 @@ func TestHighNodeUtilizationWithTaints(t *testing.T) {
 				&item.evictionsExpected,
 				nil,
 				item.nodes,
-				getPodsAssignedToNode,
 				false,
+				eventRecorder,
+			)
+
+			evictorFilter := evictions.NewEvictorFilter(
+				item.nodes,
+				getPodsAssignedToNode,
 				false,
 				false,
 				false,
 				false,
 			)
 
-			HighNodeUtilization(ctx, fakeClient, strategy, item.nodes, podEvictor, getPodsAssignedToNode)
+			HighNodeUtilization(ctx, fakeClient, strategy, item.nodes, podEvictor, evictorFilter, getPodsAssignedToNode)
 
 			if item.evictionsExpected != podEvictor.TotalEvicted() {
 				t.Errorf("Expected %v evictions, got %v", item.evictionsExpected, podEvictor.TotalEvicted())

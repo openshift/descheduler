@@ -28,6 +28,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/events"
+	"k8s.io/utils/pointer"
 	deschedulerapi "sigs.k8s.io/descheduler/pkg/api"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	eutils "sigs.k8s.io/descheduler/pkg/descheduler/evictions/utils"
@@ -61,7 +63,7 @@ func TestTooManyRestarts(t *testing.T) {
 			Labels:    map[string]string{"test": "restart-pod", "name": "test-toomanyrestarts"},
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: func(i int32) *int32 { return &i }(4),
+			Replicas: pointer.Int32(4),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"test": "restart-pod", "name": "test-toomanyrestarts"},
 			},
@@ -130,6 +132,9 @@ func TestTooManyRestarts(t *testing.T) {
 			if err != nil || len(evictionPolicyGroupVersion) == 0 {
 				t.Fatalf("Error creating eviction policy group: %v", err)
 			}
+
+			eventRecorder := &events.FakeRecorder{}
+
 			podEvictor := evictions.NewPodEvictor(
 				clientSet,
 				evictionPolicyGroupVersion,
@@ -137,13 +142,10 @@ func TestTooManyRestarts(t *testing.T) {
 				nil,
 				nil,
 				nodes,
-				getPodsAssignedToNode,
-				true,
 				false,
-				false,
-				false,
-				false,
+				eventRecorder,
 			)
+
 			// Run RemovePodsHavingTooManyRestarts strategy
 			t.Log("Running RemovePodsHavingTooManyRestarts strategy")
 			strategies.RemovePodsHavingTooManyRestarts(
@@ -160,6 +162,14 @@ func TestTooManyRestarts(t *testing.T) {
 				},
 				workerNodes,
 				podEvictor,
+				evictions.NewEvictorFilter(
+					nodes,
+					getPodsAssignedToNode,
+					true,
+					false,
+					false,
+					false,
+				),
 				getPodsAssignedToNode,
 			)
 

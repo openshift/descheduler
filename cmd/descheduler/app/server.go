@@ -63,6 +63,8 @@ func NewDeschedulerCommand(out io.Writer) *cobra.Command {
 				return
 			}
 
+			SecureServing.DisableHTTP2 = !s.EnableHTTP2
+
 			factory, _ := registry.LogRegistry.Get(s.Logging.Format)
 			if factory == nil {
 				klog.ClearLogger()

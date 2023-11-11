@@ -61,6 +61,9 @@ func NewDeschedulerCommand(out io.Writer) *cobra.Command {
 				klog.ErrorS(err, "failed to apply secure server configuration")
 				return
 			}
+
+			SecureServing.DisableHTTP2 = !s.EnableHTTP2
+
 			var factory registry.LogFormatFactory
 			if factory == nil {
 				klog.ClearLogger()

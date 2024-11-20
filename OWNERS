@@ -1,18 +1,5 @@
-approvers:
-- damemi
-- ingvagabund
-- seanmalloy
-- a7i
-- knelasevero
 reviewers:
-- damemi
-- seanmalloy
-- ingvagabund
-- lixiang233
-- a7i
-- janeliul
-- knelasevero
-emeritus_approvers:
-- aveshagarwal
-- k82cn
-- ravisantoshgudimetla
+  - ingvagabund
+approvers:
+  - ingvagabund
+component: "descheduler"

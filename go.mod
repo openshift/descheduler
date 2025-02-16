@@ -1,11 +1,13 @@
 module sigs.k8s.io/descheduler
 
-go 1.21
+go 1.22.0
+
+toolchain go1.22.9
 
 require (
 	github.com/client9/misspell v0.3.4
 	github.com/google/go-cmp v0.6.0
-	github.com/openshift/build-machinery-go v0.0.0-20231128094528-1e9b1b0595c8
+	github.com/openshift/build-machinery-go v0.0.0-20250211133638-a00a772ae1a2
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.5
 	go.opentelemetry.io/otel v1.22.0

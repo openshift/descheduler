@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/client9/misspell v0.3.4
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/openshift/build-machinery-go v0.0.0-20231128094528-1e9b1b0595c8
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.5

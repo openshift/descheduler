@@ -4,7 +4,7 @@ go 1.22.5
 
 require (
 	github.com/client9/misspell v0.3.4
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/openshift/build-machinery-go v0.0.0-20240613134303-8359781da660
 	github.com/prometheus/client_golang v1.19.1
 	github.com/prometheus/common v0.55.0

@@ -19,8 +19,6 @@ package nodeutilization
 import (
 	"context"
 	"fmt"
-	"maps"
-	"slices"
 	"sort"
 
 	"sigs.k8s.io/descheduler/pkg/api"
@@ -475,10 +473,15 @@ func assessNodesUsagesAndStaticThresholds(
 		rawUsages, rawCapacities, ResourceUsageToResourceThreshold,
 	)
 
+	keys := []string{}
+	for key := range usage {
+		keys = append(keys, key)
+	}
+
 	// we are not taking the average and applying deviations to it we can
 	// simply replicate the same threshold across all nodes and return.
 	thresholds := normalizer.Replicate(
-		slices.Collect(maps.Keys(usage)),
+		keys,
 		[]api.ResourceThresholds{lowSpan, highSpan},
 	)
 	return usage, thresholds
@@ -524,9 +527,14 @@ func assessNodesUsagesAndRelativeThresholds(
 		thresholdsToKeysAndValues(higherThresholds)...,
 	)
 
+	keys := []string{}
+	for key := range usage {
+		keys = append(keys, key)
+	}
+
 	// replicate the same assessed thresholds to all nodes.
 	thresholds := normalizer.Replicate(
-		slices.Collect(maps.Keys(usage)),
+		keys,
 		[]api.ResourceThresholds{lowerThresholds, higherThresholds},
 	)
 
@@ -609,7 +617,11 @@ func uniquifyResourceNames(resourceNames []v1.ResourceName) []v1.ResourceName {
 	for _, resourceName := range resourceNames {
 		resourceNamesMap[resourceName] = true
 	}
-	return slices.Collect(maps.Keys(resourceNamesMap))
+	keys := []v1.ResourceName{}
+	for key := range resourceNamesMap {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 // filterResourceNamesFromNodeUsage removes from the node usage slice all keys

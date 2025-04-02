@@ -29,11 +29,11 @@ type FakeMetricsV1alpha1 struct {
 }
 
 func (c *FakeMetricsV1alpha1) NodeMetricses() v1alpha1.NodeMetricsInterface {
-	return newFakeNodeMetricses(c)
+	return &FakeNodeMetricses{c}
 }
 
 func (c *FakeMetricsV1alpha1) PodMetricses(namespace string) v1alpha1.PodMetricsInterface {
-	return newFakePodMetricses(c, namespace)
+	return &FakePodMetricses{c, namespace}
 }
 
 // RESTClient returns a RESTClient that is used to communicate

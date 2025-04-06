@@ -31,7 +31,7 @@ require (
 	kubevirt.io/containerized-data-importer-api v1.60.1 // indirect; drops dependency on o/api
 	sigs.k8s.io/controller-tools v0.16.5
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
-	sigs.k8s.io/mdtoc v1.1.0
+	sigs.k8s.io/mdtoc v1.4.0
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0
 )
@@ -48,6 +48,7 @@ require (
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/common-nighthawk/go-figure v0.0.0-20210622060536-734e95fb86be // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.4 // indirect
@@ -71,7 +72,7 @@ require (
 	github.com/golang/glog v1.2.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/gomarkdown/markdown v0.0.0-20210514010506-3b9f47219fe7 // indirect
+	github.com/gomarkdown/markdown v0.0.0-20240328165702-4d01890c35c0 // indirect
 	github.com/google/cel-go v0.22.0 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
@@ -132,6 +133,7 @@ require (
 	k8s.io/kube-openapi v0.30.0 // indirect
 	kubevirt.io/controller-lifecycle-operator-sdk/api v0.0.0-20220329064328-f3cc58c6ed90 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.0 // indirect
+	sigs.k8s.io/release-utils v0.8.3 // indirect
 )
 
 replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20240430033511-f0e62f92d13f

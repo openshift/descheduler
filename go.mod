@@ -30,7 +30,7 @@ require (
 	kubevirt.io/client-go v1.3.0
 	kubevirt.io/containerized-data-importer-api v1.60.1 // indirect; drops dependency on o/api
 	sigs.k8s.io/controller-tools v0.16.5
-	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
+	sigs.k8s.io/json cfa47c3a1cc8 // indirect
 	sigs.k8s.io/mdtoc v1.1.0
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0

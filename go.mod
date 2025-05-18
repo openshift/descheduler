@@ -39,7 +39,7 @@ require (
 require golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 
 require (
-	cel.dev/expr v0.18.0 // indirect
+	cel.dev/expr v0.24.0 // indirect
 	github.com/BurntSushi/toml v0.3.1 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect

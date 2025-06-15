@@ -131,7 +131,7 @@ require (
 	k8s.io/kms v0.31.2 // indirect
 	k8s.io/kube-openapi v0.30.0 // indirect
 	kubevirt.io/controller-lifecycle-operator-sdk/api v0.0.0-20220329064328-f3cc58c6ed90 // indirect
-	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.0 // indirect
+	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.33.0 // indirect
 )
 
 replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20240430033511-f0e62f92d13f

@@ -389,7 +389,7 @@ golang.org/x/exp/slices
 golang.org/x/mod/internal/lazyregexp
 golang.org/x/mod/module
 golang.org/x/mod/semver
-# golang.org/x/net v0.30.0 => golang.org/x/net v0.33.0
+# golang.org/x/net v0.33.0 => golang.org/x/net v0.33.0
 ## explicit; go 1.18
 golang.org/x/net/context
 golang.org/x/net/http/httpguts
@@ -1342,7 +1342,7 @@ k8s.io/utils/pointer
 k8s.io/utils/ptr
 k8s.io/utils/strings/slices
 k8s.io/utils/trace
-# kubevirt.io/api v1.3.0
+# kubevirt.io/api v1.5.2
 ## explicit; go 1.22.0
 kubevirt.io/api/clone
 kubevirt.io/api/clone/v1alpha1
@@ -1379,8 +1379,8 @@ kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/snapshot/v1al
 kubevirt.io/client-go/generated/kubevirt/clientset/versioned/typed/snapshot/v1beta1
 kubevirt.io/client-go/log
 kubevirt.io/client-go/subresources
-# kubevirt.io/containerized-data-importer-api v1.60.1
-## explicit; go 1.22.3
+# kubevirt.io/containerized-data-importer-api v1.60.3-0.20241105012228-50fbed985de9
+## explicit; go 1.22.0
 kubevirt.io/containerized-data-importer-api/pkg/apis/core
 kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1
 # kubevirt.io/controller-lifecycle-operator-sdk/api v0.0.0-20220329064328-f3cc58c6ed90

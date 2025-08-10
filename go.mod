@@ -26,9 +26,9 @@ require (
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/metrics v0.33.0
 	k8s.io/utils v0.0.0-20250321185631-1f6e0b77f77e
-	kubevirt.io/api v1.3.0
+	kubevirt.io/api v1.6.0
 	kubevirt.io/client-go v1.3.0
-	kubevirt.io/containerized-data-importer-api v1.60.1 // indirect; drops dependency on o/api
+	kubevirt.io/containerized-data-importer-api v1.60.3-0.20241105012228-50fbed985de9 // indirect; drops dependency on o/api
 	sigs.k8s.io/controller-tools v0.16.5
 	sigs.k8s.io/mdtoc v1.1.0
 	sigs.k8s.io/yaml v1.4.0
@@ -125,7 +125,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/apiextensions-apiserver v0.31.2 // indirect
+	k8s.io/apiextensions-apiserver v0.32.5 // indirect
 	k8s.io/gengo/v2 v2.0.0-20250207200755-1244d31929d7 // indirect
 	k8s.io/kms v0.33.0 // indirect
 	k8s.io/kube-openapi v0.30.0 // indirect

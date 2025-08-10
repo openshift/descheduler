@@ -664,8 +664,8 @@ honnef.co/go/tools v0.0.0-20190523083050-ea95bdfd59fc/go.mod h1:rf3lG4BRIbNafJWh
 k8s.io/api v0.23.3/go.mod h1:w258XdGyvCmnBj/vGzQMj6kzdufJZVUwEM1U2fRJwSQ=
 k8s.io/api v0.33.0 h1:yTgZVn1XEe6opVpP1FylmNrIFWuDqe2H0V8CT5gxfIU=
 k8s.io/api v0.33.0/go.mod h1:CTO61ECK/KU7haa3qq8sarQ0biLq2ju405IZAd9zsiM=
-k8s.io/apiextensions-apiserver v0.31.2 h1:W8EwUb8+WXBLu56ser5IudT2cOho0gAKeTOnywBLxd0=
-k8s.io/apiextensions-apiserver v0.31.2/go.mod h1:i+Geh+nGCJEGiCGR3MlBDkS7koHIIKWVfWeRFiOsUcM=
+k8s.io/apiextensions-apiserver v0.32.5 h1:o0aKvmzIIs8Uk54pidk32pxET+Pg2ULnh9WI1PuKTwE=
+k8s.io/apiextensions-apiserver v0.32.5/go.mod h1:5fpedJa3HJJFBukAZ6ur91DEDye5gYuXISPbOiNLYpU=
 k8s.io/apimachinery v0.23.3/go.mod h1:BEuFMMBaIbcOqVIJqNZJXGFTP4W6AycEpb5+m/97hrM=
 k8s.io/apimachinery v0.33.0 h1:1a6kHrJxb2hs4t8EE5wuR/WxKDwGN1FKH3JvDtA0CIQ=
 k8s.io/apimachinery v0.33.0/go.mod h1:BHW0YOu7n22fFv/JkYOEfkUYNRN0fj0BlvMFWA7b+SM=
@@ -703,12 +703,12 @@ k8s.io/utils v0.0.0-20211116205334-6203023598ed/go.mod h1:jPW/WVKK9YHAvNhRxK0md/
 k8s.io/utils v0.0.0-20230726121419-3b25d923346b/go.mod h1:OLgZIPagt7ERELqWJFomSt595RzquPNLL48iOWgYOg0=
 k8s.io/utils v0.0.0-20250321185631-1f6e0b77f77e h1:KqK5c/ghOm8xkHYhlodbp6i6+r+ChV2vuAuVRdFbLro=
 k8s.io/utils v0.0.0-20250321185631-1f6e0b77f77e/go.mod h1:OLgZIPagt7ERELqWJFomSt595RzquPNLL48iOWgYOg0=
-kubevirt.io/api v1.3.0 h1:9sGElMmnRU50pGED+MPPD2OwQl4S5lvjCUjm+t0mI90=
-kubevirt.io/api v1.3.0/go.mod h1:e6LkElYZZm8NcP2gKlFVHZS9pgNhIARHIjSBSfeiP1s=
+kubevirt.io/api v1.6.0 h1:ZO3Dh0b24PCdCe76uLD4cRusXKrcarOzt229UFly7PQ=
+kubevirt.io/api v1.6.0/go.mod h1:p66fEy/g79x7VpgUwrkUgOoG2lYs5LQq37WM6JXMwj4=
 kubevirt.io/client-go v1.3.0 h1:/HKn4exzwsctEVTwVtEFaeT9D2v4TgWr2SmxITVEZ/4=
 kubevirt.io/client-go v1.3.0/go.mod h1:qmcJZvUjbmggY1pp7irO3zesBJj7wwGIWAdnYEoh3yc=
-kubevirt.io/containerized-data-importer-api v1.60.1 h1:chmxuINvA7TPmIe8LpShCoKPxoegcKjkG9tYboFBs/U=
-kubevirt.io/containerized-data-importer-api v1.60.1/go.mod h1:8mwrkZIdy8j/LmCyKt2wFXbiMavLUIqDaegaIF67CZs=
+kubevirt.io/containerized-data-importer-api v1.60.3-0.20241105012228-50fbed985de9 h1:KTb8wO1Lxj220DX7d2Rdo9xovvlyWWNo3AVm2ua+1nY=
+kubevirt.io/containerized-data-importer-api v1.60.3-0.20241105012228-50fbed985de9/go.mod h1:SDJjLGhbPyayDqAqawcGmVNapBp0KodOQvhKPLVGCQU=
 kubevirt.io/controller-lifecycle-operator-sdk/api v0.0.0-20220329064328-f3cc58c6ed90 h1:QMrd0nKP0BGbnxTqakhDZAUhGKxPiPiN5gSDqKUmGGc=
 kubevirt.io/controller-lifecycle-operator-sdk/api v0.0.0-20220329064328-f3cc58c6ed90/go.mod h1:018lASpFYBsYN6XwmA2TIrPCx6e0gviTd/ZNtSitKgc=
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.2 h1:jpcvIRr3GLoUoEKRkHKSmGjxb6lWwrBlJsXc+eUYQHM=

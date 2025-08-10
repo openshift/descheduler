@@ -1,6 +1,8 @@
 module sigs.k8s.io/descheduler
 
-go 1.22.5
+go 1.23.0
+
+toolchain go1.24.4
 
 require (
 	github.com/client9/misspell v0.3.4
@@ -113,7 +115,7 @@ require (
 	golang.org/x/net v0.30.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/term v0.27.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/time v0.7.0 // indirect

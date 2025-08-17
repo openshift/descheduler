@@ -16,15 +16,15 @@ require (
 	go.opentelemetry.io/otel/sdk v1.33.0
 	go.opentelemetry.io/otel/trace v1.33.0
 	google.golang.org/grpc v1.68.1
-	k8s.io/api v0.33.0
-	k8s.io/apimachinery v0.33.0
-	k8s.io/apiserver v0.33.0
-	k8s.io/client-go v0.33.0
-	k8s.io/code-generator v0.33.0
-	k8s.io/component-base v0.33.0
-	k8s.io/component-helpers v0.33.0
+	k8s.io/api v0.33.4
+	k8s.io/apimachinery v0.33.4
+	k8s.io/apiserver v0.33.4
+	k8s.io/client-go v0.33.4
+	k8s.io/code-generator v0.33.4
+	k8s.io/component-base v0.33.4
+	k8s.io/component-helpers v0.33.4
 	k8s.io/klog/v2 v2.130.1
-	k8s.io/metrics v0.33.0
+	k8s.io/metrics v0.33.4
 	k8s.io/utils v0.0.0-20250321185631-1f6e0b77f77e
 	kubevirt.io/api v1.3.0
 	kubevirt.io/client-go v1.3.0
@@ -125,9 +125,9 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/apiextensions-apiserver v0.31.2 // indirect
+	k8s.io/apiextensions-apiserver v0.33.4 // indirect
 	k8s.io/gengo/v2 v2.0.0-20250207200755-1244d31929d7 // indirect
-	k8s.io/kms v0.33.0 // indirect
+	k8s.io/kms v0.33.4 // indirect
 	k8s.io/kube-openapi v0.30.0 // indirect
 	kubevirt.io/controller-lifecycle-operator-sdk/api v0.0.0-20220329064328-f3cc58c6ed90 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.2 // indirect

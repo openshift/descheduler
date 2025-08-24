@@ -194,8 +194,8 @@ github.com/modern-go/reflect2
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 ## explicit
 github.com/munnerz/goautoneg
-# github.com/openshift/build-machinery-go v0.0.0-20231128094528-1e9b1b0595c8
-## explicit; go 1.13
+# github.com/openshift/build-machinery-go v0.0.0-20250806130835-622c0378eb0d
+## explicit; go 1.22.0
 github.com/openshift/build-machinery-go
 github.com/openshift/build-machinery-go/make
 github.com/openshift/build-machinery-go/make/lib

@@ -25,7 +25,7 @@ require (
 	k8s.io/component-helpers v0.33.0
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/metrics v0.33.0
-	k8s.io/utils v0.0.0-20250321185631-1f6e0b77f77e
+	k8s.io/utils v0.0.0-20250820121507-0af2bda4dd1d
 	kubevirt.io/api v1.3.0
 	kubevirt.io/client-go v1.3.0
 	kubevirt.io/containerized-data-importer-api v1.60.1 // indirect; drops dependency on o/api

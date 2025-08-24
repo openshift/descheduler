@@ -22,7 +22,7 @@ require (
 	k8s.io/component-base v0.29.1
 	k8s.io/component-helpers v0.29.1
 	k8s.io/klog/v2 v2.110.1
-	k8s.io/utils v0.0.0-20240102154912-e7106e64919e
+	k8s.io/utils v0.0.0-20250820121507-0af2bda4dd1d
 	sigs.k8s.io/controller-tools v0.14.0
 	sigs.k8s.io/mdtoc v1.1.0
 )

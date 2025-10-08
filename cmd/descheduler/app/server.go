@@ -31,7 +31,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"k8s.io/apimachinery/pkg/watch"
 	apiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/server/mux"
 	restclient "k8s.io/client-go/rest"
@@ -114,9 +113,6 @@ func NewDeschedulerCommand(out io.Writer) *cobra.Command {
 }
 
 func Run(ctx context.Context, rs *options.DeschedulerServer) error {
-	// increase the fake watch channel so the dry-run mode can be run
-	// over a cluster with thousands of pods
-	watch.DefaultChanSize = 100000
 	return descheduler.Run(ctx, rs)
 }
 

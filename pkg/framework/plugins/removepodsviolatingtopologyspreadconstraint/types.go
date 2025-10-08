@@ -17,7 +17,6 @@ limitations under the License.
 package removepodsviolatingtopologyspreadconstraint
 
 import (
-	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/descheduler/pkg/api"
 )
@@ -29,8 +28,7 @@ import (
 type RemovePodsViolatingTopologySpreadConstraintArgs struct {
 	metav1.TypeMeta `json:",inline"`
 
-	Namespaces             *api.Namespaces                    `json:"namespaces"`
-	LabelSelector          *metav1.LabelSelector              `json:"labelSelector"`
-	Constraints            []v1.UnsatisfiableConstraintAction `json:"constraints"`
-	TopologyBalanceNodeFit *bool                              `json:"topologyBalanceNodeFit"`
+	Namespaces             *api.Namespaces       `json:"namespaces"`
+	LabelSelector          *metav1.LabelSelector `json:"labelSelector"`
+	IncludeSoftConstraints bool                  `json:"includeSoftConstraints"`
 }

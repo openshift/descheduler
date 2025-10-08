@@ -103,7 +103,7 @@ func TestTopologySpreadConstraint(t *testing.T) {
 			}
 
 			plugin, err := removepodsviolatingtopologyspreadconstraint.New(&removepodsviolatingtopologyspreadconstraint.RemovePodsViolatingTopologySpreadConstraintArgs{
-				Constraints: []v1.UnsatisfiableConstraintAction{tc.constraint},
+				IncludeSoftConstraints: tc.constraint != v1.DoNotSchedule,
 			},
 				&frameworkfake.HandleImpl{
 					ClientsetImpl:                 clientSet,

@@ -5,9 +5,7 @@ profiles:
     pluginConfig:
     - name: "RemovePodsViolatingTopologySpreadConstraint"
       args:
-        constraints:
-          - DoNotSchedule
-          - ScheduleAnyway
+        includeSoftConstraints: true # Include 'ScheduleAnyways' constraints
     plugins:
       balance:
         enabled:

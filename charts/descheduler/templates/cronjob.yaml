@@ -66,11 +66,15 @@ spec:
               image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (printf "v%s" .Chart.AppVersion) }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command:
-                {{- toYaml .Values.command | nindent 16 }}
+                - "/bin/descheduler"
               args:
-                - --policy-config-file: "/policy-dir/policy.yaml"
+                - "--policy-config-file"
+                - "/policy-dir/policy.yaml"
                 {{- range $key, $value := .Values.cmdOptions }}
-                - {{ printf "--%s" $key }}{{ if $value }}={{ $value }}{{ end }}
+                - {{ printf "--%s" $key | quote }}
+                {{- if $value }}
+                - {{ $value | quote }}
+                {{- end }}
                 {{- end }}
               livenessProbe:
                 {{- toYaml .Values.livenessProbe | nindent 16 }}

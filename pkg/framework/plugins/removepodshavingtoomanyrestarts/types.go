@@ -29,5 +29,4 @@ type RemovePodsHavingTooManyRestartsArgs struct {
 	LabelSelector           *metav1.LabelSelector `json:"labelSelector"`
 	PodRestartThreshold     int32                 `json:"podRestartThreshold"`
 	IncludingInitContainers bool                  `json:"includingInitContainers"`
-	States                  []string              `json:"states"`
 }

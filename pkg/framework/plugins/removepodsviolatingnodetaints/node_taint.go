@@ -50,10 +50,10 @@ func New(args runtime.Object, handle frameworktypes.Handle) (frameworktypes.Plug
 		return nil, fmt.Errorf("want args to be of type RemovePodsViolatingNodeTaintsArgs, got %T", args)
 	}
 
-	var includedNamespaces, excludedNamespaces sets.Set[string]
+	var includedNamespaces, excludedNamespaces sets.String
 	if nodeTaintsArgs.Namespaces != nil {
-		includedNamespaces = sets.New(nodeTaintsArgs.Namespaces.Include...)
-		excludedNamespaces = sets.New(nodeTaintsArgs.Namespaces.Exclude...)
+		includedNamespaces = sets.NewString(nodeTaintsArgs.Namespaces.Include...)
+		excludedNamespaces = sets.NewString(nodeTaintsArgs.Namespaces.Exclude...)
 	}
 
 	// We can combine Filter and PreEvictionFilter since for this strategy it does not matter where we run PreEvictionFilter
@@ -67,7 +67,7 @@ func New(args runtime.Object, handle frameworktypes.Handle) (frameworktypes.Plug
 		return nil, fmt.Errorf("error initializing pod filter function: %v", err)
 	}
 
-	excludedTaints := sets.New(nodeTaintsArgs.ExcludedTaints...)
+	excludedTaints := sets.NewString(nodeTaintsArgs.ExcludedTaints...)
 	excludeTaint := func(taint *v1.Taint) bool {
 		// Exclude taints by key *or* key=value
 		return excludedTaints.Has(taint.Key) || (taint.Value != "" && excludedTaints.Has(fmt.Sprintf("%s=%s", taint.Key, taint.Value)))

@@ -17,23 +17,11 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	utilpointer "k8s.io/utils/pointer"
 	"sigs.k8s.io/descheduler/pkg/api"
 )
-
-var scheme *runtime.Scheme
-
-func init() {
-	scheme = runtime.NewScheme()
-	scheme.AddTypeDefaultingFunc(&RemovePodsViolatingTopologySpreadConstraintArgs{}, func(obj interface{}) {
-		SetDefaults_RemovePodsViolatingTopologySpreadConstraintArgs(obj.(*RemovePodsViolatingTopologySpreadConstraintArgs))
-	})
-	utilruntime.Must(AddToScheme(scheme))
-}
 
 func TestSetDefaults_RemovePodsViolatingTopologySpreadConstraintArgs(t *testing.T) {
 	tests := []struct {
@@ -47,54 +35,26 @@ func TestSetDefaults_RemovePodsViolatingTopologySpreadConstraintArgs(t *testing.
 			want: &RemovePodsViolatingTopologySpreadConstraintArgs{
 				Namespaces:             nil,
 				LabelSelector:          nil,
-				Constraints:            []v1.UnsatisfiableConstraintAction{v1.DoNotSchedule},
-				TopologyBalanceNodeFit: utilpointer.Bool(true),
+				IncludeSoftConstraints: false,
 			},
 		},
 		{
 			name: "RemovePodsViolatingTopologySpreadConstraintArgs with value",
 			in: &RemovePodsViolatingTopologySpreadConstraintArgs{
-				Namespaces:    &api.Namespaces{},
-				LabelSelector: &metav1.LabelSelector{},
-				Constraints:   []v1.UnsatisfiableConstraintAction{v1.DoNotSchedule, v1.ScheduleAnyway},
+				Namespaces:             &api.Namespaces{},
+				LabelSelector:          &metav1.LabelSelector{},
+				IncludeSoftConstraints: true,
 			},
 			want: &RemovePodsViolatingTopologySpreadConstraintArgs{
 				Namespaces:             &api.Namespaces{},
 				LabelSelector:          &metav1.LabelSelector{},
-				Constraints:            []v1.UnsatisfiableConstraintAction{v1.DoNotSchedule, v1.ScheduleAnyway},
-				TopologyBalanceNodeFit: utilpointer.Bool(true),
-			},
-		},
-		{
-			name: "RemovePodsViolatingTopologySpreadConstraintArgs without TopologyBalanceNodeFit",
-			in:   &RemovePodsViolatingTopologySpreadConstraintArgs{},
-			want: &RemovePodsViolatingTopologySpreadConstraintArgs{
-				Constraints:            []v1.UnsatisfiableConstraintAction{v1.DoNotSchedule},
-				TopologyBalanceNodeFit: utilpointer.Bool(true),
-			},
-		},
-		{
-			name: "RemovePodsViolatingTopologySpreadConstraintArgs with TopologyBalanceNodeFit=false",
-			in: &RemovePodsViolatingTopologySpreadConstraintArgs{
-				TopologyBalanceNodeFit: utilpointer.Bool(false),
-			},
-			want: &RemovePodsViolatingTopologySpreadConstraintArgs{
-				TopologyBalanceNodeFit: utilpointer.Bool(false),
-				Constraints:            []v1.UnsatisfiableConstraintAction{v1.DoNotSchedule},
-			},
-		},
-		{
-			name: "RemovePodsViolatingTopologySpreadConstraintArgs with nil constraints",
-			in: &RemovePodsViolatingTopologySpreadConstraintArgs{
-				Constraints: nil,
-			},
-			want: &RemovePodsViolatingTopologySpreadConstraintArgs{
-				Constraints:            []v1.UnsatisfiableConstraintAction{v1.DoNotSchedule},
-				TopologyBalanceNodeFit: utilpointer.Bool(true),
+				IncludeSoftConstraints: true,
 			},
 		},
 	}
 	for _, tc := range tests {
+		scheme := runtime.NewScheme()
+		utilruntime.Must(AddToScheme(scheme))
 		t.Run(tc.name, func(t *testing.T) {
 			scheme.Default(tc.in)
 			if diff := cmp.Diff(tc.in, tc.want); diff != "" {

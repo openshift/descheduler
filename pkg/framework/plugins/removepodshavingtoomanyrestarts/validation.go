@@ -16,10 +16,8 @@ package removepodshavingtoomanyrestarts
 import (
 	"fmt"
 
-	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // ValidateRemovePodsHavingTooManyRestartsArgs validates RemovePodsHavingTooManyRestarts arguments
@@ -38,18 +36,6 @@ func ValidateRemovePodsHavingTooManyRestartsArgs(obj runtime.Object) error {
 
 	if args.PodRestartThreshold < 1 {
 		return fmt.Errorf("invalid PodsHavingTooManyRestarts threshold")
-	}
-
-	allowedStates := sets.New(
-		// Pod phases:
-		string(v1.PodRunning),
-
-		// Container state reasons:
-		"CrashLoopBackOff",
-	)
-
-	if !allowedStates.HasAll(args.States...) {
-		return fmt.Errorf("states must be one of %v", allowedStates.UnsortedList())
 	}
 
 	return nil

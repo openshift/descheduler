@@ -282,9 +282,9 @@ func evictPods(
 	podEvictor frameworktypes.Evictor,
 	continueEviction continueEvictionCond,
 ) {
-	var excludedNamespaces sets.Set[string]
+	var excludedNamespaces sets.String
 	if evictableNamespaces != nil {
-		excludedNamespaces = sets.New(evictableNamespaces.Exclude...)
+		excludedNamespaces = sets.NewString(evictableNamespaces.Exclude...)
 	}
 
 	if continueEviction(nodeInfo, totalAvailableUsage) {

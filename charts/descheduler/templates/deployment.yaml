@@ -37,19 +37,24 @@ spec:
       serviceAccountName: {{ template "descheduler.serviceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
-      {{- toYaml . | nindent 6 }}
+      {{- toYaml . | nindent 10 }}
       {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (printf "v%s" .Chart.AppVersion) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
-            {{- toYaml .Values.command | nindent 12 }}
+            - "/bin/descheduler"
           args:
-            - --policy-config-file=/policy-dir/policy.yaml
-            - --descheduling-interval={{ required "deschedulingInterval required for running as Deployment" .Values.deschedulingInterval }}
+            - "--policy-config-file"
+            - "/policy-dir/policy.yaml"
+            - "--descheduling-interval"
+            - {{ required "deschedulingInterval required for running as Deployment" .Values.deschedulingInterval }}
             {{- range $key, $value := .Values.cmdOptions }}
-            - {{ printf "--%s" $key }}{{ if $value }}={{ $value }}{{ end }}
+            - {{ printf "--%s" $key | quote }}
+            {{- if $value }}
+            - {{ $value | quote }}
+            {{- end }}
             {{- end }}
             {{- include "descheduler.leaderElection" . | nindent 12 }}
           ports:

@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	"sigs.k8s.io/descheduler/pkg/framework"
@@ -46,7 +47,7 @@ const PluginName = "RemoveDuplicates"
 
 type RemoveDuplicates struct {
 	handle    framework.Handle
-	args      *RemoveDuplicatesArgs
+	args      *componentconfig.RemoveDuplicatesArgs
 	podFilter podutil.FilterFunc
 }
 
@@ -59,7 +60,7 @@ type podOwner struct {
 
 // New builds plugin from its arguments while passing a handle
 func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error) {
-	removeDuplicatesArgs, ok := args.(*RemoveDuplicatesArgs)
+	removeDuplicatesArgs, ok := args.(*componentconfig.RemoveDuplicatesArgs)
 	if !ok {
 		return nil, fmt.Errorf("want args to be of type RemoveDuplicatesArgs, got %T", args)
 	}
@@ -70,9 +71,8 @@ func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error)
 		excludedNamespaces = sets.NewString(removeDuplicatesArgs.Namespaces.Exclude...)
 	}
 
-	// We can combine Filter and PreEvictionFilter since for this strategy it does not matter where we run PreEvictionFilter
 	podFilter, err := podutil.NewOptions().
-		WithFilter(podutil.WrapFilterFuncs(handle.Evictor().Filter, handle.Evictor().PreEvictionFilter)).
+		WithFilter(handle.Evictor().Filter).
 		WithNamespaces(includedNamespaces).
 		WithoutNamespaces(excludedNamespaces).
 		BuildFilterFunc()

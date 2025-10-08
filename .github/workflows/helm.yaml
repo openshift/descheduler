@@ -8,12 +8,10 @@ on:
     paths:
       - 'charts/**'
       - '.github/workflows/helm.yaml'
-      - '.github/ci/ct.yaml'
   pull_request:
     paths:
       - 'charts/**'
       - '.github/workflows/helm.yaml'
-      - '.github/ci/ct.yaml'
 
 jobs:
   lint-and-test:
@@ -59,7 +57,7 @@ jobs:
 
       # helm-extra-set-args only available after ct 3.6.0
       - name: Run chart-testing (install)
-        run: ct install --config=.github/ci/ct.yaml --helm-extra-set-args='--set=kind=Deployment'
+        run: ct install --config=.github/ci/ct.yaml
 
       - name: E2E after chart install
         env:

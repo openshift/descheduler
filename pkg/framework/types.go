@@ -43,8 +43,6 @@ type Handle interface {
 type Evictor interface {
 	// Filter checks if a pod can be evicted
 	Filter(*v1.Pod) bool
-	// PreEvictionFilter checks if pod can be evicted right before eviction
-	PreEvictionFilter(*v1.Pod) bool
 	// Evict evicts a pod (no pre-check performed)
 	Evict(context.Context, *v1.Pod, evictions.EvictOptions) bool
 	// NodeLimitExceeded checks if the number of evictions for a node was exceeded
@@ -80,5 +78,4 @@ type BalancePlugin interface {
 type EvictorPlugin interface {
 	Plugin
 	Filter(pod *v1.Pod) bool
-	PreEvictionFilter(pod *v1.Pod) bool
 }

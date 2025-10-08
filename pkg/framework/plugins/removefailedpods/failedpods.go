@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	"sigs.k8s.io/descheduler/pkg/framework"
@@ -37,7 +38,7 @@ const PluginName = "RemoveFailedPods"
 // RemoveFailedPods evicts pods in failed status phase that match the given args criteria
 type RemoveFailedPods struct {
 	handle    framework.Handle
-	args      *RemoveFailedPodsArgs
+	args      *componentconfig.RemoveFailedPodsArgs
 	podFilter podutil.FilterFunc
 }
 
@@ -45,7 +46,7 @@ var _ framework.DeschedulePlugin = &RemoveFailedPods{}
 
 // New builds plugin from its arguments while passing a handle
 func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error) {
-	failedPodsArgs, ok := args.(*RemoveFailedPodsArgs)
+	failedPodsArgs, ok := args.(*componentconfig.RemoveFailedPodsArgs)
 	if !ok {
 		return nil, fmt.Errorf("want args to be of type RemoveFailedPodsArgs, got %T", args)
 	}
@@ -56,9 +57,8 @@ func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error)
 		excludedNamespaces = sets.NewString(failedPodsArgs.Namespaces.Exclude...)
 	}
 
-	// We can combine Filter and PreEvictionFilter since for this strategy it does not matter where we run PreEvictionFilter
 	podFilter, err := podutil.NewOptions().
-		WithFilter(podutil.WrapFilterFuncs(handle.Evictor().Filter, handle.Evictor().PreEvictionFilter)).
+		WithFilter(handle.Evictor().Filter).
 		WithNamespaces(includedNamespaces).
 		WithoutNamespaces(excludedNamespaces).
 		WithLabelSelector(failedPodsArgs.LabelSelector).
@@ -113,7 +113,7 @@ func (d *RemoveFailedPods) Deschedule(ctx context.Context, nodes []*v1.Node) *fr
 }
 
 // validateCanEvict looks at failedPodArgs to see if pod can be evicted given the args.
-func validateCanEvict(pod *v1.Pod, failedPodArgs *RemoveFailedPodsArgs) error {
+func validateCanEvict(pod *v1.Pod, failedPodArgs *componentconfig.RemoveFailedPodsArgs) error {
 	var errs []error
 
 	if failedPodArgs.MinPodLifetimeSeconds != nil {

@@ -22,6 +22,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	"sigs.k8s.io/descheduler/pkg/framework"
@@ -37,7 +38,7 @@ const PluginName = "RemovePodsViolatingInterPodAntiAffinity"
 // RemovePodsViolatingInterPodAntiAffinity evicts pods on the node which violate inter pod anti affinity
 type RemovePodsViolatingInterPodAntiAffinity struct {
 	handle    framework.Handle
-	args      *RemovePodsViolatingInterPodAntiAffinityArgs
+	args      *componentconfig.RemovePodsViolatingInterPodAntiAffinityArgs
 	podFilter podutil.FilterFunc
 }
 
@@ -45,7 +46,7 @@ var _ framework.DeschedulePlugin = &RemovePodsViolatingInterPodAntiAffinity{}
 
 // New builds plugin from its arguments while passing a handle
 func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error) {
-	interPodAntiAffinityArgs, ok := args.(*RemovePodsViolatingInterPodAntiAffinityArgs)
+	interPodAntiAffinityArgs, ok := args.(*componentconfig.RemovePodsViolatingInterPodAntiAffinityArgs)
 	if !ok {
 		return nil, fmt.Errorf("want args to be of type RemovePodsViolatingInterPodAntiAffinityArgs, got %T", args)
 	}
@@ -91,7 +92,7 @@ loop:
 		podutil.SortPodsBasedOnPriorityLowToHigh(pods)
 		totalPods := len(pods)
 		for i := 0; i < totalPods; i++ {
-			if checkPodsWithAntiAffinityExist(pods[i], pods) && d.handle.Evictor().Filter(pods[i]) && d.handle.Evictor().PreEvictionFilter(pods[i]) {
+			if checkPodsWithAntiAffinityExist(pods[i], pods) && d.handle.Evictor().Filter(pods[i]) {
 				if d.handle.Evictor().Evict(ctx, pods[i], evictions.EvictOptions{}) {
 					// Since the current pod is evicted all other pods which have anti-affinity with this
 					// pod need not be evicted.

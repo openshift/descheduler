@@ -94,7 +94,7 @@ func TestListPodsOnANode(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(objs...)
 
 			sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
-			podInformer := sharedInformerFactory.Core().V1().Pods().Informer()
+			podInformer := sharedInformerFactory.Core().V1().Pods()
 
 			getPodsAssignedToNode, err := BuildGetPodsAssignedToNodeFunc(podInformer)
 			if err != nil {

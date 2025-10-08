@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"sigs.k8s.io/descheduler/pkg/api"
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	"sigs.k8s.io/descheduler/pkg/framework"
 	frameworkfake "sigs.k8s.io/descheduler/pkg/framework/fake"
 	"sigs.k8s.io/descheduler/pkg/framework/plugins/defaultevictor"
@@ -716,7 +717,7 @@ func TestLowNodeUtilization(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(objs...)
 
 			sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
-			podInformer := sharedInformerFactory.Core().V1().Pods().Informer()
+			podInformer := sharedInformerFactory.Core().V1().Pods()
 
 			getPodsAssignedToNode, err := podutil.BuildGetPodsAssignedToNodeFunc(podInformer)
 			if err != nil {
@@ -789,7 +790,7 @@ func TestLowNodeUtilization(t *testing.T) {
 				SharedInformerFactoryImpl:     sharedInformerFactory,
 			}
 
-			plugin, err := NewLowNodeUtilization(&LowNodeUtilizationArgs{
+			plugin, err := NewLowNodeUtilization(&componentconfig.LowNodeUtilizationArgs{
 
 				Thresholds:             test.thresholds,
 				TargetThresholds:       test.targetThresholds,
@@ -910,7 +911,7 @@ func TestLowNodeUtilizationWithTaints(t *testing.T) {
 
 			fakeClient := fake.NewSimpleClientset(objs...)
 			sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
-			podInformer := sharedInformerFactory.Core().V1().Pods().Informer()
+			podInformer := sharedInformerFactory.Core().V1().Pods()
 
 			getPodsAssignedToNode, err := podutil.BuildGetPodsAssignedToNodeFunc(podInformer)
 			if err != nil {
@@ -962,7 +963,7 @@ func TestLowNodeUtilizationWithTaints(t *testing.T) {
 				SharedInformerFactoryImpl:     sharedInformerFactory,
 			}
 
-			plugin, err := NewLowNodeUtilization(&LowNodeUtilizationArgs{
+			plugin, err := NewLowNodeUtilization(&componentconfig.LowNodeUtilizationArgs{
 
 				Thresholds: api.ResourceThresholds{
 					v1.ResourcePods: 20,

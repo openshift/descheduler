@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/descheduler/pkg/api"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	"sigs.k8s.io/descheduler/pkg/framework"
 )
@@ -38,7 +39,7 @@ const HighNodeUtilizationPluginName = "HighNodeUtilization"
 
 type HighNodeUtilization struct {
 	handle    framework.Handle
-	args      *HighNodeUtilizationArgs
+	args      *componentconfig.HighNodeUtilizationArgs
 	podFilter func(pod *v1.Pod) bool
 }
 
@@ -46,7 +47,7 @@ var _ framework.BalancePlugin = &HighNodeUtilization{}
 
 // NewHighNodeUtilization builds plugin from its arguments while passing a handle
 func NewHighNodeUtilization(args runtime.Object, handle framework.Handle) (framework.Plugin, error) {
-	highNodeUtilizatioArgs, ok := args.(*HighNodeUtilizationArgs)
+	highNodeUtilizatioArgs, ok := args.(*componentconfig.HighNodeUtilizationArgs)
 	if !ok {
 		return nil, fmt.Errorf("want args to be of type HighNodeUtilizationArgs, got %T", args)
 	}

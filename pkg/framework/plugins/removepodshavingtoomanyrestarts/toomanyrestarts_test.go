@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/events"
 
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	"sigs.k8s.io/descheduler/pkg/framework"
@@ -108,8 +109,8 @@ func TestRemovePodsHavingTooManyRestarts(t *testing.T) {
 	createRemovePodsHavingTooManyRestartsAgrs := func(
 		podRestartThresholds int32,
 		includingInitContainers bool,
-	) RemovePodsHavingTooManyRestartsArgs {
-		return RemovePodsHavingTooManyRestartsArgs{
+	) componentconfig.RemovePodsHavingTooManyRestartsArgs {
+		return componentconfig.RemovePodsHavingTooManyRestartsArgs{
 			PodRestartThreshold:     podRestartThresholds,
 			IncludingInitContainers: includingInitContainers,
 		}
@@ -120,7 +121,7 @@ func TestRemovePodsHavingTooManyRestarts(t *testing.T) {
 	tests := []struct {
 		description                    string
 		nodes                          []*v1.Node
-		args                           RemovePodsHavingTooManyRestartsArgs
+		args                           componentconfig.RemovePodsHavingTooManyRestartsArgs
 		expectedEvictedPodCount        uint
 		maxPodsToEvictPerNode          *uint
 		maxNoOfPodsToEvictPerNamespace *uint
@@ -239,7 +240,7 @@ func TestRemovePodsHavingTooManyRestarts(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(objs...)
 
 			sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
-			podInformer := sharedInformerFactory.Core().V1().Pods().Informer()
+			podInformer := sharedInformerFactory.Core().V1().Pods()
 
 			getPodsAssignedToNode, err := podutil.BuildGetPodsAssignedToNodeFunc(podInformer)
 			if err != nil {

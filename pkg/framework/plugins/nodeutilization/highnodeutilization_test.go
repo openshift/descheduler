@@ -31,6 +31,7 @@ import (
 	"k8s.io/client-go/tools/events"
 
 	"sigs.k8s.io/descheduler/pkg/api"
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	"sigs.k8s.io/descheduler/pkg/framework"
@@ -450,7 +451,7 @@ func TestHighNodeUtilization(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(objs...)
 
 			sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
-			podInformer := sharedInformerFactory.Core().V1().Pods().Informer()
+			podInformer := sharedInformerFactory.Core().V1().Pods()
 
 			getPodsAssignedToNode, err := podutil.BuildGetPodsAssignedToNodeFunc(podInformer)
 			if err != nil {
@@ -523,7 +524,7 @@ func TestHighNodeUtilization(t *testing.T) {
 				SharedInformerFactoryImpl:     sharedInformerFactory,
 			}
 
-			plugin, err := NewHighNodeUtilization(&HighNodeUtilizationArgs{
+			plugin, err := NewHighNodeUtilization(&componentconfig.HighNodeUtilizationArgs{
 				Thresholds: testCase.thresholds,
 			},
 				handle)
@@ -624,7 +625,7 @@ func TestHighNodeUtilizationWithTaints(t *testing.T) {
 
 			fakeClient := fake.NewSimpleClientset(objs...)
 			sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
-			podInformer := sharedInformerFactory.Core().V1().Pods().Informer()
+			podInformer := sharedInformerFactory.Core().V1().Pods()
 
 			getPodsAssignedToNode, err := podutil.BuildGetPodsAssignedToNodeFunc(podInformer)
 			if err != nil {
@@ -675,7 +676,7 @@ func TestHighNodeUtilizationWithTaints(t *testing.T) {
 				SharedInformerFactoryImpl:     sharedInformerFactory,
 			}
 
-			plugin, err := NewHighNodeUtilization(&HighNodeUtilizationArgs{
+			plugin, err := NewHighNodeUtilization(&componentconfig.HighNodeUtilizationArgs{
 				Thresholds: api.ResourceThresholds{
 					v1.ResourceCPU: 40,
 				},

@@ -37,9 +37,6 @@ func (hi *HandleImpl) Evictor() framework.Evictor {
 func (hi *HandleImpl) Filter(pod *v1.Pod) bool {
 	return hi.EvictorFilterImpl.Filter(pod)
 }
-func (hi *HandleImpl) PreEvictionFilter(pod *v1.Pod) bool {
-	return hi.EvictorFilterImpl.PreEvictionFilter(pod)
-}
 func (hi *HandleImpl) Evict(ctx context.Context, pod *v1.Pod, opts evictions.EvictOptions) bool {
 	return hi.PodEvictorImpl.EvictPod(ctx, pod, opts)
 }

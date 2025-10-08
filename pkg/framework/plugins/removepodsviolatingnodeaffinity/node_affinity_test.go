@@ -27,6 +27,7 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/events"
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	"sigs.k8s.io/descheduler/pkg/framework"
 
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
@@ -95,12 +96,12 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 		expectedEvictedPodCount        uint
 		maxPodsToEvictPerNode          *uint
 		maxNoOfPodsToEvictPerNamespace *uint
-		args                           RemovePodsViolatingNodeAffinityArgs
+		args                           componentconfig.RemovePodsViolatingNodeAffinityArgs
 		nodefit                        bool
 	}{
 		{
 			description: "Invalid Affinity type, should not evict any pods",
-			args: RemovePodsViolatingNodeAffinityArgs{
+			args: componentconfig.RemovePodsViolatingNodeAffinityArgs{
 				NodeAffinityType: []string{"requiredDuringSchedulingRequiredDuringExecution"},
 			},
 			expectedEvictedPodCount: 0,
@@ -109,7 +110,7 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 		},
 		{
 			description: "Pod is correctly scheduled on node, no eviction expected",
-			args: RemovePodsViolatingNodeAffinityArgs{
+			args: componentconfig.RemovePodsViolatingNodeAffinityArgs{
 				NodeAffinityType: []string{"requiredDuringSchedulingIgnoredDuringExecution"},
 			},
 			expectedEvictedPodCount: 0,
@@ -119,7 +120,7 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 		{
 			description:             "Pod is scheduled on node without matching labels, another schedulable node available, should be evicted",
 			expectedEvictedPodCount: 1,
-			args: RemovePodsViolatingNodeAffinityArgs{
+			args: componentconfig.RemovePodsViolatingNodeAffinityArgs{
 				NodeAffinityType: []string{"requiredDuringSchedulingIgnoredDuringExecution"},
 			},
 			pods:  addPodsToNode(nodeWithoutLabels, nil),
@@ -128,7 +129,7 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 		{
 			description:             "Pod is scheduled on node without matching labels, another schedulable node available, maxPodsToEvictPerNode set to 1, should not be evicted",
 			expectedEvictedPodCount: 1,
-			args: RemovePodsViolatingNodeAffinityArgs{
+			args: componentconfig.RemovePodsViolatingNodeAffinityArgs{
 				NodeAffinityType: []string{"requiredDuringSchedulingIgnoredDuringExecution"},
 			},
 			pods:                  addPodsToNode(nodeWithoutLabels, nil),
@@ -138,7 +139,7 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 		{
 			description:             "Pod is scheduled on node without matching labels, another schedulable node available, maxPodsToEvictPerNode set to 1, no pod evicted since pod terminting",
 			expectedEvictedPodCount: 1,
-			args: RemovePodsViolatingNodeAffinityArgs{
+			args: componentconfig.RemovePodsViolatingNodeAffinityArgs{
 				NodeAffinityType: []string{"requiredDuringSchedulingIgnoredDuringExecution"},
 			},
 			pods:                  addPodsToNode(nodeWithoutLabels, &metav1.Time{}),
@@ -148,7 +149,7 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 		{
 			description:             "Pod is scheduled on node without matching labels, another schedulable node available, maxNoOfPodsToEvictPerNamespace set to 1, should not be evicted",
 			expectedEvictedPodCount: 1,
-			args: RemovePodsViolatingNodeAffinityArgs{
+			args: componentconfig.RemovePodsViolatingNodeAffinityArgs{
 				NodeAffinityType: []string{"requiredDuringSchedulingIgnoredDuringExecution"},
 			},
 			pods:                           addPodsToNode(nodeWithoutLabels, nil),
@@ -158,7 +159,7 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 		{
 			description:             "Pod is scheduled on node without matching labels, another schedulable node available, maxNoOfPodsToEvictPerNamespace set to 1, no pod evicted since pod terminting",
 			expectedEvictedPodCount: 1,
-			args: RemovePodsViolatingNodeAffinityArgs{
+			args: componentconfig.RemovePodsViolatingNodeAffinityArgs{
 				NodeAffinityType: []string{"requiredDuringSchedulingIgnoredDuringExecution"},
 			},
 			pods:                           addPodsToNode(nodeWithoutLabels, &metav1.Time{}),
@@ -168,7 +169,7 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 		{
 			description:             "Pod is scheduled on node without matching labels, but no node where pod fits is available, should not evict",
 			expectedEvictedPodCount: 0,
-			args: RemovePodsViolatingNodeAffinityArgs{
+			args: componentconfig.RemovePodsViolatingNodeAffinityArgs{
 				NodeAffinityType: []string{"requiredDuringSchedulingIgnoredDuringExecution"},
 			},
 			pods:    addPodsToNode(nodeWithoutLabels, nil),
@@ -178,7 +179,7 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 		{
 			description:             "Pod is scheduled on node without matching labels, and node where pod fits is available, should evict",
 			expectedEvictedPodCount: 0,
-			args: RemovePodsViolatingNodeAffinityArgs{
+			args: componentconfig.RemovePodsViolatingNodeAffinityArgs{
 				NodeAffinityType: []string{"requiredDuringSchedulingIgnoredDuringExecution"},
 			},
 			pods:                  addPodsToNode(nodeWithoutLabels, nil),
@@ -203,7 +204,7 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(objs...)
 
 			sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
-			podInformer := sharedInformerFactory.Core().V1().Pods().Informer()
+			podInformer := sharedInformerFactory.Core().V1().Pods()
 
 			getPodsAssignedToNode, err := podutil.BuildGetPodsAssignedToNodeFunc(podInformer)
 			if err != nil {
@@ -256,7 +257,7 @@ func TestRemovePodsViolatingNodeAffinity(t *testing.T) {
 			}
 
 			plugin, err := New(
-				&RemovePodsViolatingNodeAffinityArgs{
+				&componentconfig.RemovePodsViolatingNodeAffinityArgs{
 					NodeAffinityType: tc.args.NodeAffinityType,
 				},
 				handle,

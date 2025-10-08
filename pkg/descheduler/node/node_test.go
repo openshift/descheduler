@@ -70,14 +70,14 @@ func TestReadyNodesWithNodeSelector(t *testing.T) {
 	nodeSelector := "type=compute"
 
 	sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
-	nodeLister := sharedInformerFactory.Core().V1().Nodes().Lister()
+	nodeInformer := sharedInformerFactory.Core().V1().Nodes()
 
 	stopChannel := make(chan struct{})
 	sharedInformerFactory.Start(stopChannel)
 	sharedInformerFactory.WaitForCacheSync(stopChannel)
 	defer close(stopChannel)
 
-	nodes, _ := ReadyNodes(ctx, fakeClient, nodeLister, nodeSelector)
+	nodes, _ := ReadyNodes(ctx, fakeClient, nodeInformer, nodeSelector)
 
 	if nodes[0].Name != "node1" {
 		t.Errorf("Expected node1, got %s", nodes[0].Name)
@@ -207,7 +207,7 @@ func TestPodFitsCurrentNode(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(objs...)
 
 			sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
-			podInformer := sharedInformerFactory.Core().V1().Pods().Informer()
+			podInformer := sharedInformerFactory.Core().V1().Pods()
 
 			getPodsAssignedToNode, err := podutil.BuildGetPodsAssignedToNodeFunc(podInformer)
 			if err != nil {
@@ -737,7 +737,7 @@ func TestPodFitsAnyOtherNode(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset(objs...)
 
 			sharedInformerFactory := informers.NewSharedInformerFactory(fakeClient, 0)
-			podInformer := sharedInformerFactory.Core().V1().Pods().Informer()
+			podInformer := sharedInformerFactory.Core().V1().Pods()
 
 			getPodsAssignedToNode, err := podutil.BuildGetPodsAssignedToNodeFunc(podInformer)
 			if err != nil {

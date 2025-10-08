@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	"sigs.k8s.io/descheduler/pkg/descheduler/node"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
@@ -50,7 +51,7 @@ type topology struct {
 // RemovePodsViolatingTopologySpreadConstraint evicts pods which violate their topology spread constraints
 type RemovePodsViolatingTopologySpreadConstraint struct {
 	handle    framework.Handle
-	args      *RemovePodsViolatingTopologySpreadConstraintArgs
+	args      *componentconfig.RemovePodsViolatingTopologySpreadConstraintArgs
 	podFilter podutil.FilterFunc
 }
 
@@ -58,7 +59,7 @@ var _ framework.BalancePlugin = &RemovePodsViolatingTopologySpreadConstraint{}
 
 // New builds plugin from its arguments while passing a handle
 func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error) {
-	pluginArgs, ok := args.(*RemovePodsViolatingTopologySpreadConstraintArgs)
+	pluginArgs, ok := args.(*componentconfig.RemovePodsViolatingTopologySpreadConstraintArgs)
 	if !ok {
 		return nil, fmt.Errorf("want args to be of type RemovePodsViolatingTopologySpreadConstraintArgs, got %T", args)
 	}
@@ -214,10 +215,7 @@ func (d *RemovePodsViolatingTopologySpreadConstraint) Balance(ctx context.Contex
 		if !d.podFilter(pod) {
 			continue
 		}
-
-		if d.handle.Evictor().PreEvictionFilter(pod) {
-			d.handle.Evictor().Evict(ctx, pod, evictions.EvictOptions{})
-		}
+		d.handle.Evictor().Evict(ctx, pod, evictions.EvictOptions{})
 		if d.handle.Evictor().NodeLimitExceeded(nodeMap[pod.Spec.NodeName]) {
 			nodeLimitExceeded[pod.Spec.NodeName] = true
 		}

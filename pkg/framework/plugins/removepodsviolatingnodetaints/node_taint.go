@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	"sigs.k8s.io/descheduler/pkg/framework"
@@ -36,7 +37,7 @@ const PluginName = "RemovePodsViolatingNodeTaints"
 // RemovePodsViolatingNodeTaints evicts pods on the node which violate NoSchedule Taints on nodes
 type RemovePodsViolatingNodeTaints struct {
 	handle         framework.Handle
-	args           *RemovePodsViolatingNodeTaintsArgs
+	args           *componentconfig.RemovePodsViolatingNodeTaintsArgs
 	taintFilterFnc func(taint *v1.Taint) bool
 	podFilter      podutil.FilterFunc
 }
@@ -45,7 +46,7 @@ var _ framework.DeschedulePlugin = &RemovePodsViolatingNodeTaints{}
 
 // New builds plugin from its arguments while passing a handle
 func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error) {
-	nodeTaintsArgs, ok := args.(*RemovePodsViolatingNodeTaintsArgs)
+	nodeTaintsArgs, ok := args.(*componentconfig.RemovePodsViolatingNodeTaintsArgs)
 	if !ok {
 		return nil, fmt.Errorf("want args to be of type RemovePodsViolatingNodeTaintsArgs, got %T", args)
 	}
@@ -56,9 +57,8 @@ func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error)
 		excludedNamespaces = sets.NewString(nodeTaintsArgs.Namespaces.Exclude...)
 	}
 
-	// We can combine Filter and PreEvictionFilter since for this strategy it does not matter where we run PreEvictionFilter
 	podFilter, err := podutil.NewOptions().
-		WithFilter(podutil.WrapFilterFuncs(handle.Evictor().Filter, handle.Evictor().PreEvictionFilter)).
+		WithFilter(handle.Evictor().Filter).
 		WithNamespaces(includedNamespaces).
 		WithoutNamespaces(excludedNamespaces).
 		WithLabelSelector(nodeTaintsArgs.LabelSelector).

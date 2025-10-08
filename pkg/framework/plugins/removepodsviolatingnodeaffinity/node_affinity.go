@@ -23,6 +23,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/descheduler/pkg/apis/componentconfig"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
@@ -34,7 +35,7 @@ const PluginName = "RemovePodsViolatingNodeAffinity"
 // RemovePodsViolatingNodeAffinity evicts pods on the node which violate node affinity
 type RemovePodsViolatingNodeAffinity struct {
 	handle    framework.Handle
-	args      *RemovePodsViolatingNodeAffinityArgs
+	args      *componentconfig.RemovePodsViolatingNodeAffinityArgs
 	podFilter podutil.FilterFunc
 }
 
@@ -42,7 +43,7 @@ var _ framework.DeschedulePlugin = &RemovePodsViolatingNodeAffinity{}
 
 // New builds plugin from its arguments while passing a handle
 func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error) {
-	nodeAffinityArgs, ok := args.(*RemovePodsViolatingNodeAffinityArgs)
+	nodeAffinityArgs, ok := args.(*componentconfig.RemovePodsViolatingNodeAffinityArgs)
 	if !ok {
 		return nil, fmt.Errorf("want args to be of type RemovePodsViolatingNodeAffinityArgs, got %T", args)
 	}
@@ -53,9 +54,8 @@ func New(args runtime.Object, handle framework.Handle) (framework.Plugin, error)
 		excludedNamespaces = sets.NewString(nodeAffinityArgs.Namespaces.Exclude...)
 	}
 
-	// We can combine Filter and PreEvictionFilter since for this strategy it does not matter where we run PreEvictionFilter
 	podFilter, err := podutil.NewOptions().
-		WithFilter(podutil.WrapFilterFuncs(handle.Evictor().Filter, handle.Evictor().PreEvictionFilter)).
+		WithFilter(handle.Evictor().Filter).
 		WithNamespaces(includedNamespaces).
 		WithoutNamespaces(excludedNamespaces).
 		WithLabelSelector(nodeAffinityArgs.LabelSelector).

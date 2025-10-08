@@ -60,7 +60,6 @@ func autoConvert_v1alpha1_DeschedulerConfiguration_To_componentconfig_Deschedule
 	out.IgnorePVCPods = in.IgnorePVCPods
 	out.LeaderElection = in.LeaderElection
 	out.Logging = in.Logging
-	out.ClientConnection = in.ClientConnection
 	return nil
 }
 
@@ -80,7 +79,6 @@ func autoConvert_componentconfig_DeschedulerConfiguration_To_v1alpha1_Deschedule
 	out.IgnorePVCPods = in.IgnorePVCPods
 	out.LeaderElection = in.LeaderElection
 	out.Logging = in.Logging
-	out.ClientConnection = in.ClientConnection
 	return nil
 }
 

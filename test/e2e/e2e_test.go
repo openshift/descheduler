@@ -37,7 +37,6 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/events"
-	componentbaseconfig "k8s.io/component-base/config"
 	"k8s.io/utils/pointer"
 	utilpointer "k8s.io/utils/pointer"
 	"sigs.k8s.io/descheduler/cmd/descheduler/app/options"
@@ -70,7 +69,7 @@ func MakePodSpec(priorityClassName string, gracePeriod *int64) v1.PodSpec {
 		Containers: []v1.Container{{
 			Name:            "pause",
 			ImagePullPolicy: "Never",
-			Image:           "kubernetes/pause",
+			Image:           "registry.k8s.io/pause",
 			Ports:           []v1.ContainerPort{{ContainerPort: 80}},
 			Resources: v1.ResourceRequirements{
 				Limits: v1.ResourceList{
@@ -128,7 +127,7 @@ func RcByNameContainer(name, namespace string, replicas int32, labels map[string
 }
 
 func initializeClient(t *testing.T) (clientset.Interface, informers.SharedInformerFactory, listersv1.NodeLister, podutil.GetPodsAssignedToNodeFunc, chan struct{}) {
-	clientSet, err := client.CreateClient(componentbaseconfig.ClientConnectionConfiguration{Kubeconfig: os.Getenv("KUBECONFIG")}, "")
+	clientSet, err := client.CreateClient(os.Getenv("KUBECONFIG"), "")
 	if err != nil {
 		t.Errorf("Error during client creation with %v", err)
 	}
@@ -331,7 +330,7 @@ func TestLowNodeUtilization(t *testing.T) {
 				Containers: []v1.Container{{
 					Name:            "pause",
 					ImagePullPolicy: "Never",
-					Image:           "kubernetes/pause",
+					Image:           "registry.k8s.io/pause",
 					Ports:           []v1.ContainerPort{{ContainerPort: 80}},
 					Resources: v1.ResourceRequirements{
 						Limits: v1.ResourceList{
@@ -1085,7 +1084,7 @@ func TestPodLifeTimeOldestEvicted(t *testing.T) {
 
 func TestDeschedulingInterval(t *testing.T) {
 	ctx := context.Background()
-	clientSet, err := client.CreateClient(componentbaseconfig.ClientConnectionConfiguration{Kubeconfig: os.Getenv("KUBECONFIG")}, "")
+	clientSet, err := client.CreateClient(os.Getenv("KUBECONFIG"), "")
 	if err != nil {
 		t.Errorf("Error during client creation with %v", err)
 	}
@@ -1336,7 +1335,7 @@ func createBalancedPodForNodes(
 				Containers: []v1.Container{
 					{
 						Name:  "pause",
-						Image: "kubernetes/pause",
+						Image: "registry.k8s.io/pause",
 						Resources: v1.ResourceRequirements{
 							Limits:   needCreateResource,
 							Requests: needCreateResource,

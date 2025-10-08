@@ -16,12 +16,10 @@ package nodeutilization
 import (
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/descheduler/pkg/api"
 )
 
-func ValidateHighNodeUtilizationArgs(obj runtime.Object) error {
-	args := obj.(*HighNodeUtilizationArgs)
+func ValidateHighNodeUtilizationArgs(args *HighNodeUtilizationArgs) error {
 	// only exclude can be set, or not at all
 	if args.EvictableNamespaces != nil && len(args.EvictableNamespaces.Include) > 0 {
 		return fmt.Errorf("only Exclude namespaces can be set, inclusion is not supported")
@@ -34,8 +32,7 @@ func ValidateHighNodeUtilizationArgs(obj runtime.Object) error {
 	return nil
 }
 
-func ValidateLowNodeUtilizationArgs(obj runtime.Object) error {
-	args := obj.(*LowNodeUtilizationArgs)
+func ValidateLowNodeUtilizationArgs(args *LowNodeUtilizationArgs) error {
 	// only exclude can be set, or not at all
 	if args.EvictableNamespaces != nil && len(args.EvictableNamespaces.Include) > 0 {
 		return fmt.Errorf("only Exclude namespaces can be set, inclusion is not supported")

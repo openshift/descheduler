@@ -23,12 +23,11 @@ func addDefaultingFuncs(scheme *runtime.Scheme) error {
 
 // SetDefaults_RemovePodsViolatingNodeAffinityArgs
 // TODO: the final default values would be discussed in community
-func SetDefaults_RemovePodsViolatingNodeAffinityArgs(obj runtime.Object) {
-	args := obj.(*RemovePodsViolatingNodeAffinityArgs)
-	if args.Namespaces == nil {
-		args.Namespaces = nil
+func SetDefaults_RemovePodsViolatingNodeAffinityArgs(obj *RemovePodsViolatingNodeAffinityArgs) {
+	if obj.Namespaces == nil {
+		obj.Namespaces = nil
 	}
-	if args.LabelSelector == nil {
-		args.LabelSelector = nil
+	if obj.LabelSelector == nil {
+		obj.LabelSelector = nil
 	}
 }

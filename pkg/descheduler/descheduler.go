@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 
-	componentbaseconfig "k8s.io/component-base/config"
 	"k8s.io/klog/v2"
 
 	v1 "k8s.io/api/core/v1"
@@ -45,26 +44,22 @@ import (
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
 	"sigs.k8s.io/descheduler/pkg/framework"
-	"sigs.k8s.io/descheduler/pkg/framework/pluginregistry"
 	"sigs.k8s.io/descheduler/pkg/framework/plugins/defaultevictor"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/pluginbuilder"
 	"sigs.k8s.io/descheduler/pkg/utils"
 )
 
 func Run(ctx context.Context, rs *options.DeschedulerServer) error {
 	metrics.Register()
 
-	clientConnection := rs.ClientConnection
-	if rs.KubeconfigFile != "" && clientConnection.Kubeconfig == "" {
-		clientConnection.Kubeconfig = rs.KubeconfigFile
-	}
-	rsclient, eventClient, err := createClients(clientConnection)
+	rsclient, eventClient, err := createClients(rs.KubeconfigFile)
 	if err != nil {
 		return err
 	}
 	rs.Client = rsclient
 	rs.EventClient = eventClient
 
-	deschedulerPolicy, err := LoadPolicyConfig(rs.PolicyConfigFile, rs.Client, pluginregistry.PluginRegistry)
+	deschedulerPolicy, err := LoadPolicyConfig(rs.PolicyConfigFile, rs.Client, pluginbuilder.PluginRegistry)
 	if err != nil {
 		return err
 	}
@@ -363,7 +358,7 @@ func RunDeschedulerStrategies(ctx context.Context, rs *options.DeschedulerServer
 					klog.ErrorS(fmt.Errorf("unable to get plugin config"), "skipping plugin", "plugin", plugin)
 					continue
 				}
-				registryPlugin, ok := pluginregistry.PluginRegistry[plugin]
+				registryPlugin, ok := pluginbuilder.PluginRegistry[plugin]
 				pgFnc := registryPlugin.PluginBuilder
 				if !ok {
 					klog.ErrorS(fmt.Errorf("unable to find plugin in the pluginsMap"), "skipping plugin", "plugin", plugin)
@@ -373,8 +368,14 @@ func RunDeschedulerStrategies(ctx context.Context, rs *options.DeschedulerServer
 					klog.ErrorS(err, "unable to initialize a plugin", "pluginName", plugin)
 				}
 				if pg != nil {
-					// pg can be of any of each type, or both
-					enabledDeschedulePlugins, enabledBalancePlugins = includeProfilePluginsByType(enabledDeschedulePlugins, enabledBalancePlugins, pg)
+					switch v := pg.(type) {
+					case framework.DeschedulePlugin:
+						enabledDeschedulePlugins = append(enabledDeschedulePlugins, v)
+					case framework.BalancePlugin:
+						enabledBalancePlugins = append(enabledBalancePlugins, v)
+					default:
+						klog.ErrorS(fmt.Errorf("unknown plugin extension point"), "skipping plugin", "plugin", plugin)
+					}
 				}
 			}
 		}
@@ -415,28 +416,6 @@ func RunDeschedulerStrategies(ctx context.Context, rs *options.DeschedulerServer
 	return nil
 }
 
-func includeProfilePluginsByType(enabledDeschedulePlugins []framework.DeschedulePlugin, enabledBalancePlugins []framework.BalancePlugin, pg framework.Plugin) ([]framework.DeschedulePlugin, []framework.BalancePlugin) {
-	enabledDeschedulePlugins = includeDeschedule(enabledDeschedulePlugins, pg)
-	enabledBalancePlugins = includeBalance(enabledBalancePlugins, pg)
-	return enabledDeschedulePlugins, enabledBalancePlugins
-}
-
-func includeDeschedule(enabledDeschedulePlugins []framework.DeschedulePlugin, pg framework.Plugin) []framework.DeschedulePlugin {
-	_, ok := pg.(framework.DeschedulePlugin)
-	if ok {
-		enabledDeschedulePlugins = append(enabledDeschedulePlugins, pg.(framework.DeschedulePlugin))
-	}
-	return enabledDeschedulePlugins
-}
-
-func includeBalance(enabledBalancePlugins []framework.BalancePlugin, pg framework.Plugin) []framework.BalancePlugin {
-	_, ok := pg.(framework.BalancePlugin)
-	if ok {
-		enabledBalancePlugins = append(enabledBalancePlugins, pg.(framework.BalancePlugin))
-	}
-	return enabledBalancePlugins
-}
-
 func getPluginConfig(pluginName string, pluginConfigs []api.PluginConfig) *api.PluginConfig {
 	for _, pluginConfig := range pluginConfigs {
 		if pluginConfig.Name == pluginName {
@@ -446,13 +425,13 @@ func getPluginConfig(pluginName string, pluginConfigs []api.PluginConfig) *api.P
 	return nil
 }
 
-func createClients(clientConnection componentbaseconfig.ClientConnectionConfiguration) (clientset.Interface, clientset.Interface, error) {
-	kClient, err := client.CreateClient(clientConnection, "descheduler")
+func createClients(kubeconfig string) (clientset.Interface, clientset.Interface, error) {
+	kClient, err := client.CreateClient(kubeconfig, "descheduler")
 	if err != nil {
 		return nil, nil, err
 	}
 
-	eventClient, err := client.CreateClient(clientConnection, "")
+	eventClient, err := client.CreateClient(kubeconfig, "")
 	if err != nil {
 		return nil, nil, err
 	}

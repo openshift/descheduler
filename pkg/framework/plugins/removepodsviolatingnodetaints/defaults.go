@@ -23,18 +23,17 @@ func addDefaultingFuncs(scheme *runtime.Scheme) error {
 
 // SetDefaults_RemovePodsViolatingNodeTaintsArgs
 // TODO: the final default values would be discussed in community
-func SetDefaults_RemovePodsViolatingNodeTaintsArgs(obj runtime.Object) {
-	args := obj.(*RemovePodsViolatingNodeTaintsArgs)
-	if args.Namespaces == nil {
-		args.Namespaces = nil
+func SetDefaults_RemovePodsViolatingNodeTaintsArgs(obj *RemovePodsViolatingNodeTaintsArgs) {
+	if obj.Namespaces == nil {
+		obj.Namespaces = nil
 	}
-	if args.LabelSelector == nil {
-		args.LabelSelector = nil
+	if obj.LabelSelector == nil {
+		obj.LabelSelector = nil
 	}
-	if !args.IncludePreferNoSchedule {
-		args.IncludePreferNoSchedule = false
+	if !obj.IncludePreferNoSchedule {
+		obj.IncludePreferNoSchedule = false
 	}
-	if args.ExcludedTaints == nil {
-		args.ExcludedTaints = nil
+	if obj.ExcludedTaints == nil {
+		obj.ExcludedTaints = nil
 	}
 }

@@ -29,5 +29,10 @@ import (
 // Public to allow building arbitrary schemes.
 // All generated defaulters are covering - they call all nested defaulters.
 func RegisterDefaults(scheme *runtime.Scheme) error {
+	scheme.AddTypeDefaultingFunc(&PodLifeTimeArgs{}, func(obj interface{}) { SetObjectDefaults_PodLifeTimeArgs(obj.(*PodLifeTimeArgs)) })
 	return nil
+}
+
+func SetObjectDefaults_PodLifeTimeArgs(in *PodLifeTimeArgs) {
+	SetDefaults_PodLifeTimeArgs(in)
 }

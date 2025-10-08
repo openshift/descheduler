@@ -23,12 +23,11 @@ func addDefaultingFuncs(scheme *runtime.Scheme) error {
 
 // SetDefaults_RemoveDuplicatesArgs
 // TODO: the final default values would be discussed in community
-func SetDefaults_RemoveDuplicatesArgs(obj runtime.Object) {
-	args := obj.(*RemoveDuplicatesArgs)
-	if args.Namespaces == nil {
-		args.Namespaces = nil
+func SetDefaults_RemoveDuplicatesArgs(obj *RemoveDuplicatesArgs) {
+	if obj.Namespaces == nil {
+		obj.Namespaces = nil
 	}
-	if args.ExcludeOwnerKinds == nil {
-		args.ExcludeOwnerKinds = nil
+	if obj.ExcludeOwnerKinds == nil {
+		obj.ExcludeOwnerKinds = nil
 	}
 }

@@ -3,7 +3,7 @@ all: build
 
 GO=GO111MODULE=on GOFLAGS=-mod=vendor go
 
-# Include the library makefile
+# Include the library makefile 
 include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
 	golang.mk \
 	targets/openshift/images.mk \

@@ -9,7 +9,7 @@ include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
 	targets/openshift/images.mk \
 )
 
-# Exclude e2e tests from unit testing
+# Exclude e2e tests from unit testing 
 GO_TEST_PACKAGES :=./pkg/... ./cmd/...
 GO_BUILD_FLAGS :=-tags strictfipsruntime
 GO_LD_EXTRAFLAGS :=-X sigs.k8s.io/descheduler/pkg/version.version=v0.18.0-818-g07e467faf

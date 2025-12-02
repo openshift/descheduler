@@ -10,6 +10,7 @@ COPY --from=builder /go/src/github.com/openshift/descheduler/LICENSE /licenses/.
 
 LABEL io.k8s.display-name="Descheduler based on RHEL 9" \
       io.k8s.description="This is a component of OpenShift for the Descheduler based on RHEL 9" \
+      distribution-scope="public" \
       com.redhat.component="descheduler-container" \
       name="kube-descheduler-operator/descheduler-rhel9" \
       cpe="cpe:/a:redhat:kube_descheduler_operator:5.3::el9" \

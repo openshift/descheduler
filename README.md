@@ -33,11 +33,13 @@ but relies on the default scheduler for that.
 ## ⚠️  Documentation Versions by Release
 
 If you are using a published release of Descheduler (such as
-`registry.k8s.io/descheduler/descheduler:v0.33.0`), follow the documentation in
+`registry.k8s.io/descheduler/descheduler:v0.35.0`), follow the documentation in
 that version's release branch, as listed below:
 
 |Descheduler Version|Docs link|
 |---|---|
+|v0.35.x|[`release-1.35`](https://github.com/kubernetes-sigs/descheduler/blob/release-1.35/README.md)|
+|v0.34.x|[`release-1.34`](https://github.com/kubernetes-sigs/descheduler/blob/release-1.34/README.md)|
 |v0.33.x|[`release-1.33`](https://github.com/kubernetes-sigs/descheduler/blob/release-1.33/README.md)|
 |v0.32.x|[`release-1.32`](https://github.com/kubernetes-sigs/descheduler/blob/release-1.32/README.md)|
 |v0.31.x|[`release-1.31`](https://github.com/kubernetes-sigs/descheduler/blob/release-1.31/README.md)|
@@ -93,17 +95,17 @@ See the [resources | Kustomize](https://kubectl.docs.kubernetes.io/references/ku
 
 Run As A Job
 ```
-kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/job?ref=release-1.33' | kubectl apply -f -
+kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/job?ref=release-1.34' | kubectl apply -f -
 ```
 
 Run As A CronJob
 ```
-kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/cronjob?ref=release-1.33' | kubectl apply -f -
+kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/cronjob?ref=release-1.34' | kubectl apply -f -
 ```
 
 Run As A Deployment
 ```
-kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/deployment?ref=release-1.33' | kubectl apply -f -
+kustomize build 'github.com/kubernetes-sigs/descheduler/kubernetes/deployment?ref=release-1.34' | kubectl apply -f -
 ```
 
 ## User Guide
@@ -128,7 +130,7 @@ These are top level keys in the Descheduler Policy that you can use to configure
 | `metricsCollector.enabled`         | `bool`   | `false`       | Enables Kubernetes [Metrics Server](https://kubernetes-sigs.github.io/metrics-server/) collection.                         |
 | `metricsProviders`                 | `[]object` | `nil`       | Enables various metrics providers like Kubernetes [Metrics Server](https://kubernetes-sigs.github.io/metrics-server/)      |
 | `evictionFailureEventNotification` | `bool`   | `false`       | Enables eviction failure event notification.                                                                               |
-| `gracePeriodSeconds`               | `int`    | `0`           | The duration in seconds before the object should be deleted. The value zero indicates delete immediately.                  |
+| `gracePeriodSeconds`               | `int`    | `nil`           | The duration in seconds before the object should be deleted. The value zero indicates delete immediately. If this value is nil, the default grace period for the specified type will be used.            |
 | `prometheus` |`object`| `nil` | Configures collection of Prometheus metrics for actual resource utilization |
 | `prometheus.url` |`string`| `nil` | Points to a Prometheus server url |
 | `prometheus.authToken` |`object`| `nil` | Sets Prometheus server authentication token. If not specified in cluster authentication token from the container's file system is read. |
@@ -157,6 +159,7 @@ The Default Evictor Plugin is used by default for filtering pods before processi
 | `ignorePvcPods`           | `bool`                 | `false`       | **[Deprecated: Use `podProtections` with `"PodsWithPVC"` instead]**<br>Sets whether PVC pods should be evicted or ignored.                                                                                          |
 | `evictFailedBarePods`     | `bool`                 | `false`       | **[Deprecated: Use `podProtections` with `"FailedBarePods"` instead]**<br>Allows eviction of pods without owner references and in a failed phase.                                                                   |
 | `ignorePodsWithoutPDB`    | `bool`                 | `false`       | **[Deprecated: Use `podProtections` with `"PodsWithoutPDB"` instead]**<br>Sets whether pods without PodDisruptionBudget should be evicted or ignored.                                                               |
+| `namespaceLabelSelector`  | `metav1.LabelSelector` |               | limiting the pods which are processed by namespace (see [label filtering](#label-filtering))                                                                                                                        |
 | `labelSelector`           | `metav1.LabelSelector` |               | (See [label filtering](#label-filtering))                                                                                                                                                                           |
 | `priorityThreshold`       | `priorityThreshold`    |               | (See [priority filtering](#priority-filtering))                                                                                                                                                                     |
 | `nodeFit`                 | `bool`                 | `false`       | (See [node fit filtering](#node-fit-filtering))                                                                                                                                                                     |
@@ -187,6 +190,31 @@ The Default Evictor Plugin is used by default for filtering pods before processi
 | `"PodsWithPVC"`            | Prevents eviction of Pods using Persistent Volume Claims (PVCs). |
 | `"PodsWithoutPDB"`         | Prevents eviction of Pods without a PodDisruptionBudget (PDB).   |
 | `"PodsWithResourceClaims"` | Prevents eviction of Pods using ResourceClaims.                  |
+
+
+#### Protecting pods using specific Storage Classes
+
+With the `PodsWithPVC` protection enabled all pods using PVCs are protected from eviction by default, if needed you can restrict the protection by filtering by PVC storage class. When filtering out by storage class, only pods using PVCs with the specified storage classes are protected from eviction. For example:
+
+```yaml
+apiVersion: "descheduler/v1alpha2"
+kind: "DeschedulerPolicy"
+profiles:
+- name: ProfileName
+  pluginConfig:
+  - name: "DefaultEvictor"
+    args:
+      podProtections:
+        extraEnabled:
+        - PodsWithPVC
+        config:
+          PodsWithPVC:
+            protectedStorageClasses:
+            - name: storage-class-0
+            - name: storage-class-1
+
+```
+This example will protect pods using PVCs with storage classes `storage-class-0` and `storage-class-1` from eviction.
 
 ### Example policy
 
@@ -228,6 +256,7 @@ profiles:
             #- "PodsWithPVC"
             #- "PodsWithoutPDB"
             #- "PodsWithResourceClaims"
+          config: {}
         nodeFit: true
         minReplicas: 2
     plugins:
@@ -1107,6 +1136,8 @@ packages that it is compiled with.
 
 | Descheduler | Supported Kubernetes Version |
 |-------------|------------------------------|
+| v0.35       | v1.35                        |
+| v0.34       | v1.34                        |
 | v0.33       | v1.33                        |
 | v0.32       | v1.32                        |
 | v0.31       | v1.31                        |
@@ -1150,7 +1181,7 @@ that the only people who can get things done around here are the "maintainers".
 We also would love to add more "official" maintainers, so show us what you can
 do!
 
-This repository uses the Kubernetes bots. See a full list of the commands [here][prow].
+This repository uses the Kubernetes bots. See a full list of the commands [here](https://go.k8s.io/bot-commands).
 
 ### Communicating With Contributors
 

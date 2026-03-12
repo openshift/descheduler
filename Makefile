@@ -3,7 +3,10 @@ all: build
 
 GO=GO111MODULE=on GOFLAGS=-mod=vendor go
 
-# Include the library makefile 
+# Version to use when bumping Dockerfile versions
+VERSION ?= 4.14.2
+
+# Include the library makefile
 include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
 	golang.mk \
 	targets/openshift/images.mk \
@@ -27,6 +30,14 @@ test-e2e: GO_TEST_PACKAGES :=./test/e2e
 test-e2e: GO_TEST_FLAGS :=-v
 test-e2e: test-unit
 .PHONY: test-e2e
+
+update-version:
+	./hack/update-version.sh $(VERSION)
+.PHONY: update-version
+
+verify-version:
+	./hack/verify-version.sh $(VERSION)
+.PHONY: verify-version
 
 clean:
 	$(RM) -r ./apiserver.local.config

@@ -13,6 +13,7 @@ LABEL io.k8s.display-name="Descheduler based on RHEL 9" \
       distribution-scope="public" \
       com.redhat.component="descheduler-container" \
       name="kube-descheduler-operator/descheduler-rhel9" \
+      cpe="cpe:/a:redhat:kube_descheduler_operator:5.0::el9" \
       release="5.0.4" \
       version="5.0.4" \
       url="https://github.com/openshift/descheduler" \

@@ -3,7 +3,7 @@ WORKDIR /go/src/github.com/openshift/descheduler
 COPY . .
 RUN make build --warn-undefined-variables
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest@sha256:d91be7cea9f03a757d69ad7fcdfcd7849dba820110e7980d5e2a1f46ed06ea3b
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest@sha256:fe688da81a696387ca53a4c19231e99289591f990c904ef913c51b6e87d4e4df
 COPY --from=builder /go/src/github.com/openshift/descheduler/descheduler /usr/bin/
 RUN mkdir /licenses
 COPY --from=builder /go/src/github.com/openshift/descheduler/LICENSE /licenses/.

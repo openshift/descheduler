@@ -3,7 +3,7 @@ all: build
 
 GO=GO111MODULE=on GOFLAGS=-mod=vendor go
 
-# Version to use when bumping Dockerfile versions
+# Version to use when bumping Dockerfile versions 
 VERSION ?= 5.4.0
 
 # Include the library makefile

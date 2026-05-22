@@ -23,7 +23,7 @@ jobs:
           kubectl_version: ${{ matrix.k8s-version }}
           config: test/kind-config.yaml
           version: ${{ matrix.kind-version }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true

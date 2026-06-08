@@ -198,7 +198,7 @@ effectiveCooldown = layer1Result × 2^(count − 1)    (for count ≥ 1)
 ```
 
 `count` is the number of migration completions recorded for this VMI in the
-`migrationHistoryWindow` (default **24 hours**).  The history is populated by
+`migrationHistoryWindow` (default **48 hours**).  The history is populated by
 the informer event handler (§2.2), which fires each time a VMI's
 `endTimestamp` changes — capturing every migration the cluster runs for that
 VMI, not just descheduler-caused ones.
@@ -209,7 +209,7 @@ churned:
 
 **Examples with default `migrationCooldown = 15m`, small VM (duration < 15m):**
 
-| Migrations in last 24h | Effective cooldown (layer 2) |
+| Migrations in last 48h | Effective cooldown (layer 2) |
 |---:|---|
 | 0 or 1 | 15 m |
 | 2 | 30 m |
@@ -219,8 +219,8 @@ churned:
 | 6+ | capped by layer 3 |
 
 A VM that migrates once or twice recovers its normal cooldown naturally as old
-history entries age out of the 24-hour window.  A VM that migrates 5+ times in
-a day is almost certainly in a churn loop; it gets progressively longer
+history entries age out of the 48-hour window.  A VM that migrates 6+ times in
+two days is almost certainly in a churn loop; it gets progressively longer
 protection until the loop breaks.
 
 > **Note on the race condition:** the informer event handler fires
@@ -252,16 +252,16 @@ with a long `migrationHistoryWindow` because backoff can grow unbounded.
 **Full worked example — large VM in a churn loop:**
 
 Assume: `migrationCooldown: 15m`, `maxMigrationCooldown: 6h`,
-`migrationHistoryWindow: 24h`.  The VM has a 30-minute migration duration.
+`migrationHistoryWindow: 48h`.  The VM has a 30-minute migration duration.
 
-| Event | Time | count in 24h window | Layer 1 | Layer 2 | Layer 3 (cap) |
+| Event | Time | count in 48h window | Layer 1 | Layer 2 | Layer 3 (cap) |
 |---|---|---:|---|---|---|
 | 1st migration completes | T+0 | 1 | 30 m | 30 m | 30 m |
 | 2nd migration completes | T+31m | 2 | 30 m | 60 m | 60 m |
 | 3rd migration completes | T+2h | 3 | 30 m | 2 h | 2 h |
 | 4th migration completes | T+5h | 4 | 30 m | 4 h | 4 h |
 | 5th migration completes | T+10h | 5 | 30 m | 8 h | **6 h** (capped) |
-| 1st entry ages out at T+24h | T+25h | 4 | 30 m | 4 h | 4 h |
+| 1st entry ages out at T+48h | T+49h | 4 | 30 m | 4 h | 4 h |
 
 The VM steps back down gradually as history entries age out — it does not
 suddenly go from fully protected to fully evictable.
@@ -277,7 +277,7 @@ default to apply.
 |---|---|---|---|
 | `migrationCooldown` | `15m` | `≥ 0` | Minimum cooldown after any migration. `0` disables the configured floor; the adaptive duration (layer 1) still applies. |
 | `maxMigrationCooldown` | `6h` | `≥ migrationCooldown` or `0` | Upper bound on the effective cooldown after all layers. `0` disables the cap. |
-| `migrationHistoryWindow` | `24h` | `≥ 0` | Sliding window for migration-count history used by exponential backoff. `0` disables the window (no backoff). |
+| `migrationHistoryWindow` | `48h` | `≥ 0` | Sliding window for migration-count history used by exponential backoff. Must exceed `6 × maxMigrationCooldown` (36h with defaults) to reliably apply the cap in steady state. `0` disables the window (no backoff). |
 
 **Validation rules:**
 - `migrationCooldown` must be non-negative.
@@ -303,14 +303,14 @@ want the backoff to accumulate.
 # All defaults; these values are applied automatically when fields are omitted.
 migrationCooldown: 15m
 maxMigrationCooldown: 6h
-migrationHistoryWindow: 24h
+migrationHistoryWindow: 48h
 ```
 
 **Protective — strong churn resistance:**
 ```yaml
 migrationCooldown: 30m
 maxMigrationCooldown: 12h
-migrationHistoryWindow: 48h
+migrationHistoryWindow: 72h
 ```
 Suitable for clusters with large memory-intensive VMs where each migration is
 expensive and operators want the descheduler to back off aggressively after
@@ -342,7 +342,7 @@ profiles:
         args:
           migrationCooldown: 15m
           maxMigrationCooldown: 6h
-          migrationHistoryWindow: 24h
+          migrationHistoryWindow: 48h
       - name: DefaultEvictor
         args:
           nodeFit: true   # only evict when a valid destination node exists

@@ -24,9 +24,9 @@ import (
 )
 
 const (
-	defaultMigrationCooldown    = 15 * time.Minute
-	defaultMaxMigrationCooldown = 6 * time.Hour
-	defaultMigrationHistoryWindow = 24 * time.Hour
+	defaultMigrationCooldown      = 15 * time.Minute
+	defaultMaxMigrationCooldown   = 6 * time.Hour
+	defaultMigrationHistoryWindow = 48 * time.Hour
 )
 
 func addDefaultingFuncs(scheme *runtime.Scheme) error {

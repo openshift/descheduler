@@ -44,6 +44,11 @@ type KubevirtMigrationAwareArgs struct {
 	// MigrationHistoryWindow is the sliding window over which past migration
 	// completions are counted for exponential-backoff purposes.  Longer windows
 	// make the plugin sensitive to day-scale churn; shorter windows let VMs
-	// recover their clean record faster.  Defaults to 24h.
+	// recover their clean record faster.
+	//
+	// The window must exceed 6 × MaxMigrationCooldown (36h with defaults) so
+	// that in steady state the count within the window stays above 6 and the
+	// MaxMigrationCooldown cap is reliably applied to chronically bouncing VMs.
+	// Defaults to 48h.
 	MigrationHistoryWindow metav1.Duration `json:"migrationHistoryWindow,omitempty"`
 }

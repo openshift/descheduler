@@ -478,7 +478,7 @@ func TestPreEvictionFilterExponentialBackoff(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.description, func(t *testing.T) {
 			plugin := newTestPlugin(t, cooldown, tc.maxCooldown, vmi)
-			// Pre-populate history: spread entries so they all fall within the 6h window.
+			// Pre-populate history: spread entries so they all fall within the history window.
 			for i := 0; i < tc.historyCount; i++ {
 				plugin.history.record(vmiUID, now.Add(-time.Duration(i+1)*30*time.Minute))
 			}
@@ -535,6 +535,84 @@ func TestMigrationHistory(t *testing.T) {
 		h.mu.Unlock()
 		if exists {
 			t.Error("map entry was not deleted after all entries expired")
+		}
+	})
+}
+
+// TestPreEvictionFilterSteadyStateReachesMaxCooldown is a regression test for
+// the "always count=5" steady-state bug.
+//
+// With 4-hour migration intervals the boundary condition is:
+//
+//	count at check time = window/interval - 1
+//
+// A 24-hour window gives 24/4 - 1 = 5, so the MaxMigrationCooldown cap (which
+// requires count ≥ 6) is never applied and the VM is re-evicted every 4h.
+// A 48-hour window gives 48/4 - 1 = 11, keeping count well above 6 in steady
+// state and ensuring the cap is always reached.
+//
+// The test uses 6 history entries: 5 within the last 20h and a 6th placed just
+// past the 24h boundary (24h+1s ago) so it is excluded by a 24h window but
+// retained by a 48h window.  The VMI's last migration ended 5h ago — strictly
+// between the two resulting cooldowns (4h vs 6h) — so only the 48h window
+// correctly defers the eviction.
+func TestPreEvictionFilterSteadyStateReachesMaxCooldown(t *testing.T) {
+	const (
+		ns    = "default"
+		base  = 15 * time.Minute
+		maxCD = 6 * time.Hour
+		uid   = types.UID("uid-steady-state")
+	)
+	now := time.Now()
+
+	vmi := makeVMI(ns, "vm-steady", completedState(
+		now.Add(-5*time.Hour-10*time.Minute),
+		now.Add(-5*time.Hour),
+	))
+	vmi.SetUID(uid)
+	pod := makeVirtLauncherPod(ns, "vl-steady", "node-1", "vm-steady")
+
+	// makePlugin creates a fresh plugin with its own history so that countAndPrune
+	// in one subtest cannot prune entries seen by the next.  Entries are recorded
+	// oldest-first to match production ordering (migrations complete in sequence)
+	// and to satisfy the ascending-slice assumption of sort.Search inside countAndPrune.
+	makePlugin := func(t *testing.T, window time.Duration) *KubevirtMigrationAware {
+		t.Helper()
+		h := newMigrationHistory()
+		// 6th entry: 1 second past the 24h boundary → excluded by a 24h window,
+		// retained by a 48h window.
+		h.record(uid, now.Add(-24*time.Hour-time.Second))
+		// 5 entries at 4h intervals within the last 20h (oldest to newest).
+		for i := 5; i >= 1; i-- {
+			h.record(uid, now.Add(-time.Duration(i)*4*time.Hour))
+		}
+		args := &KubevirtMigrationAwareArgs{
+			MigrationCooldown:      metav1.Duration{Duration: base},
+			MaxMigrationCooldown:   metav1.Duration{Duration: maxCD},
+			MigrationHistoryWindow: metav1.Duration{Duration: window},
+		}
+		pg, err := newPlugin(context.Background(), args, nil, makeVMILister(vmi), h)
+		if err != nil {
+			t.Fatalf("newPlugin: %v", err)
+		}
+		return pg.(*KubevirtMigrationAware)
+	}
+
+	// 24h window: 6th entry excluded → count=5 → cooldown=4h → 5h elapsed ≥ 4h → VM
+	// is incorrectly allowed; this is the bug the window increase fixes.
+	t.Run("24h window: count=5, 4h cooldown, VM allowed despite 5h elapsed", func(t *testing.T) {
+		plugin := makePlugin(t, 24*time.Hour)
+		if !plugin.PreEvictionFilter(pod) {
+			t.Error("PreEvictionFilter() = false (deferred), want true (allowed): 24h window drops 6th entry → count=5 → 4h cooldown → satisfied by 5h elapsed")
+		}
+	})
+
+	// 48h window: all 6 entries retained → count=6 → 15m*2^5=8h → capped at 6h →
+	// 5h elapsed < 6h → VM correctly deferred.
+	t.Run("48h window: count=6, max cooldown applied, VM deferred despite 5h elapsed", func(t *testing.T) {
+		plugin := makePlugin(t, 48*time.Hour)
+		if plugin.PreEvictionFilter(pod) {
+			t.Error("PreEvictionFilter() = true (allowed), want false (deferred): 48h window retains 6th entry → count=6 → 6h cap → not satisfied by 5h elapsed")
 		}
 	})
 }

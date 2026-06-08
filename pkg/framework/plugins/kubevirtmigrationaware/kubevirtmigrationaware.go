@@ -33,6 +33,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -53,10 +54,11 @@ const (
 	// virt-launcher pods carry this annotation with the VMI name as value.
 	vmiAnnotationKey = "kubevirt.io/domain"
 
-	// VMI GVR in the kubevirt.io API group.
+	// VMI and VMIM GVRs in the kubevirt.io API group.
 	vmiGroup    = "kubevirt.io"
 	vmiVersion  = "v1"
-	vmiResource = "virtualmachineinstances"
+	vmiResource  = "virtualmachineinstances"
+	vmimResource = "virtualmachineinstancemigrations"
 
 	// Timeout for the initial informer cache sync at plugin startup.
 	cacheWarmupTimeout = 30 * time.Second
@@ -70,6 +72,12 @@ var (
 		Group:    vmiGroup,
 		Version:  vmiVersion,
 		Resource: vmiResource,
+	}
+
+	vmimGVR = schema.GroupVersionResource{
+		Group:    vmiGroup,
+		Version:  vmiVersion,
+		Resource: vmimResource,
 	}
 
 	// evictionBlocksTotal counts how many times the plugin prevented an eviction,
@@ -225,7 +233,88 @@ func New(ctx context.Context, args runtime.Object, handle frameworktypes.Handle)
 		return nil, fmt.Errorf("timed out waiting for VMI informer cache to sync (is KubeVirt installed?)")
 	}
 
+	// Best-effort: pre-populate history from VMIM objects that already exist in
+	// the cluster.  This shortens the ramp-up period after a descheduler restart
+	// by recovering as much backoff state as possible.  VMIMs are periodically
+	// garbage-collected by KubeVirt, so completions that predate the GC window
+	// will be missing — the history will continue to build from live informer
+	// events and converge over time regardless.
+	//
+	// Requires list permission on virtualmachineinstancemigrations at the cluster
+	// level (all namespaces).
+	logger := klog.FromContext(ctx).WithValues("plugin", PluginName)
+	listCtx, listCancel := context.WithTimeout(ctx, cacheWarmupTimeout)
+	defer listCancel()
+	if vmimList, err := dynClient.Resource(vmimGVR).List(listCtx, metav1.ListOptions{}); err != nil {
+		logger.V(2).Info("cannot list VMIM objects; migration history will build from live events only", "err", err)
+	} else {
+		seedHistoryFromVMIMs(vmimList.Items, vmiGenericInformer.Lister(), history, kmaArgs.MigrationHistoryWindow.Duration, logger)
+	}
+
 	return newPlugin(ctx, kmaArgs, handle, vmiGenericInformer.Lister(), history)
+}
+
+// seedHistoryFromVMIMs pre-populates migration history from a snapshot of
+// existing VMIM objects.  Only Succeeded migrations whose endTimestamp falls
+// within the history window are recorded; everything else is silently skipped.
+//
+// Entries are inserted oldest-first so that each per-VMI slice in
+// migrationHistory stays sorted ascending, preserving the binary-search
+// invariant that countAndPrune relies on.
+//
+// This is called once at startup (see New) and is intentionally best-effort:
+// KubeVirt garbage-collects VMIMs after completion, so any completions that
+// occurred before the GC window will already be absent from the list.
+func seedHistoryFromVMIMs(items []unstructured.Unstructured, lister cache.GenericLister, history *migrationHistory, window time.Duration, logger klog.Logger) {
+	cutoff := time.Now().Add(-window)
+
+	type entry struct {
+		uid types.UID
+		t   time.Time
+	}
+	var entries []entry
+
+	for i := range items {
+		item := &items[i]
+
+		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
+		if phase != "Succeeded" {
+			continue
+		}
+
+		endTS, _, _ := unstructured.NestedString(item.Object, "status", "migrationState", "endTimestamp")
+		if endTS == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, endTS)
+		if err != nil || !t.After(cutoff) {
+			continue
+		}
+
+		vmiName, _, _ := unstructured.NestedString(item.Object, "spec", "vmiName")
+		if vmiName == "" {
+			continue
+		}
+
+		rObj, err := lister.ByNamespace(item.GetNamespace()).Get(vmiName)
+		if err != nil {
+			continue // VMI may have been deleted already
+		}
+		uObj, ok := rObj.(*unstructured.Unstructured)
+		if !ok {
+			continue
+		}
+
+		entries = append(entries, entry{uid: uObj.GetUID(), t: t})
+	}
+
+	sort.Slice(entries, func(i, j int) bool { return entries[i].t.Before(entries[j].t) })
+	for _, e := range entries {
+		history.record(e.uid, e.t)
+	}
+
+	logger.V(2).Info("migration history seeded from VMIM objects (best-effort)",
+		"considered", len(items), "seeded", len(entries))
 }
 
 // newPlugin is the internal constructor used by both New (production) and tests.

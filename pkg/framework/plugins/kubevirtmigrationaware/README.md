@@ -90,6 +90,27 @@ non-empty value — meaning a migration just completed — the handler records t
 event in an in-memory history map keyed by VMI UID.  This history drives the
 exponential backoff described in §3.2.
 
+**Seeding migration history from existing VMIMs at startup.**  Once the VMI
+informer cache has warmed up, the plugin performs a one-shot, best-effort
+`list` of all `virtualmachineinstancemigrations.kubevirt.io/v1` objects across
+all namespaces.  For each VMIM whose `status.phase` is `Succeeded` and whose
+`status.migrationState.endTimestamp` falls within the configured
+`migrationHistoryWindow`, the plugin resolves the corresponding VMI via the
+already-synced VMI cache (using `spec.vmiName` + namespace → VMI UID), then
+records the completion in the in-memory history exactly as the live informer
+handler would.  Entries are inserted oldest-first to preserve the
+ascending-order invariant that the binary-search inside `countAndPrune` relies
+on.
+
+This seeding step is **intentionally best-effort**: KubeVirt garbage-collects
+completed VMIMs after a cluster-defined TTL, so any completions that predate
+the GC window are already absent and cannot be recovered.  The history will
+continue to build from live informer events regardless and converge over time.
+The primary benefit is after a rolling restart of the descheduler pod: VMIMs
+that KubeVirt has not yet GC'd — typically recent completions within the last
+few hours — are recovered immediately, shortening the window during which a
+chronically bouncing VM could appear to have a clean record.
+
 The link between a `virt-launcher` pod and its VMI is the annotation
 `kubevirt.io/domain` that KubeVirt sets on every `virt-launcher` pod.  Its
 value is the VMI name.  Pods without this annotation are not `virt-launcher`
@@ -366,13 +387,22 @@ profiles:
 ```
 
 The RBAC for the descheduler's service account must include `list` and `watch`
-on `virtualmachineinstances` in all namespaces:
+on `virtualmachineinstances` and `list` on `virtualmachineinstancemigrations`
+in all namespaces:
 
 ```yaml
 - apiGroups: ["kubevirt.io"]
   resources: ["virtualmachineinstances"]
   verbs: ["list", "watch"]
+- apiGroups: ["kubevirt.io"]
+  resources: ["virtualmachineinstancemigrations"]
+  verbs: ["list"]
 ```
+
+The `list` on `virtualmachineinstancemigrations` is needed only for the
+one-shot history-seeding call at startup (§2.2).  If this permission is
+unavailable the plugin falls back gracefully and builds its history from live
+VMI informer events instead.
 
 ---
 
@@ -472,19 +502,25 @@ correct scheduling configuration, not rate-limiting.
 
 ## 8. Known Limitations
 
-**Migration history (Tier B) is in-memory and lost on restart.**
-The 24-hour migration history that drives exponential backoff (§3, Tier B) is
-stored in the plugin's process memory.  If the descheduler pod is restarted —
-rolling update, OOM kill, node eviction — the history is reset.  VMs that had
-accumulated backoff appear clean again, and the descheduler may trigger a burst
-of migrations immediately after restart.
+**Migration history (Tier B) is in-memory; it is partially recovered on restart.**
+The migration history that drives exponential backoff (§3, Tier B) is stored
+in the plugin's process memory.  If the descheduler pod is restarted — rolling
+update, OOM kill, node eviction — the history is reset.
+
+At startup the plugin performs a best-effort `list` of existing
+`VirtualMachineInstanceMigration` objects and re-seeds the history from any
+Succeeded migrations whose `endTimestamp` falls within the configured window
+and whose VMIM KubeVirt has not yet garbage-collected (§2.2).  For a typical
+rolling restart this recovers most of the recent history; for an extended
+outage, completions that predate KubeVirt's GC TTL will be missing and the
+history must rebuild from live events.
 
 The VMI-persisted state (§3, Tier A) — the last migration's start and end
 timestamps on the VMI object — is unaffected by a descheduler restart and
 continues to enforce the base adaptive cooldown.  The window of vulnerability
 is therefore bounded: the per-VM base cooldown (layer 1) remains intact; only
-the churn-history multiplier (layer 2) is lost until the in-memory history
-rebuilds.
+the churn-history multiplier (layer 2) may be partially missing immediately
+after restart, until the seeding step and live events have rebuilt it.
 
 **All migrations are counted, not only descheduler-caused ones.**
 The informer handler fires on every `endTimestamp` transition, including

@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
 )
 
 // makeVMI builds an unstructured VMI object with optional migrationState.
@@ -87,6 +88,33 @@ func makePlainPod(namespace, name, nodeName string) *v1.Pod {
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 		Spec:       v1.PodSpec{NodeName: nodeName},
 	}
+}
+
+// makeVMIM builds an unstructured VMIM object.  phase should be one of
+// "Succeeded", "Failed", "Running", etc.  endTimestamp may be zero to omit it.
+func makeVMIM(namespace, name, vmiName, phase string, endTime time.Time) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "kubevirt.io/v1",
+			"kind":       "VirtualMachineInstanceMigration",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"vmiName": vmiName,
+			},
+			"status": map[string]interface{}{
+				"phase": phase,
+			},
+		},
+	}
+	if !endTime.IsZero() {
+		_ = unstructured.SetNestedField(obj.Object,
+			endTime.UTC().Format(time.RFC3339),
+			"status", "migrationState", "endTimestamp")
+	}
+	return obj
 }
 
 // makeVMILister builds a cache.GenericLister pre-populated with the given VMIs.
@@ -617,6 +645,211 @@ func TestPreEvictionFilterSteadyStateReachesMaxCooldown(t *testing.T) {
 	})
 }
 
+// ── VMIM history seeding ──────────────────────────────────────────────────────
+
+func TestSeedHistoryFromVMIMs(t *testing.T) {
+	const (
+		ns     = "default"
+		window = 48 * time.Hour
+	)
+	now := time.Now()
+
+	// Two VMIs, each with a distinct UID.
+	vmiA := makeVMI(ns, "vm-a", nil)
+	vmiA.SetUID("uid-a")
+	vmiB := makeVMI(ns, "vm-b", nil)
+	vmiB.SetUID("uid-b")
+	lister := makeVMILister(vmiA, vmiB)
+
+	cases := []struct {
+		description string
+		vmims       []*unstructured.Unstructured
+		wantCounts  map[types.UID]int // expected count per VMI UID after seeding
+	}{
+		{
+			description: "succeeded VMIMs within window are recorded",
+			vmims: []*unstructured.Unstructured{
+				makeVMIM(ns, "m1", "vm-a", "Succeeded", now.Add(-1*time.Hour)),
+				makeVMIM(ns, "m2", "vm-a", "Succeeded", now.Add(-2*time.Hour)),
+				makeVMIM(ns, "m3", "vm-a", "Succeeded", now.Add(-3*time.Hour)),
+			},
+			wantCounts: map[types.UID]int{"uid-a": 3},
+		},
+		{
+			description: "non-Succeeded phases are not counted",
+			vmims: []*unstructured.Unstructured{
+				makeVMIM(ns, "m1", "vm-a", "Succeeded", now.Add(-1*time.Hour)),
+				makeVMIM(ns, "m2", "vm-a", "Failed", now.Add(-2*time.Hour)),
+				makeVMIM(ns, "m3", "vm-a", "Running", now.Add(-3*time.Hour)),
+			},
+			wantCounts: map[types.UID]int{"uid-a": 1},
+		},
+		{
+			description: "VMIMs outside the history window are skipped",
+			vmims: []*unstructured.Unstructured{
+				makeVMIM(ns, "m1", "vm-a", "Succeeded", now.Add(-1*time.Hour)),
+				makeVMIM(ns, "m2", "vm-a", "Succeeded", now.Add(-49*time.Hour)), // outside 48h
+			},
+			wantCounts: map[types.UID]int{"uid-a": 1},
+		},
+		{
+			description: "VMIM with no endTimestamp is skipped",
+			vmims: []*unstructured.Unstructured{
+				makeVMIM(ns, "m1", "vm-a", "Succeeded", time.Time{}), // zero → omitted
+			},
+			wantCounts: map[types.UID]int{},
+		},
+		{
+			description: "VMIM whose VMI is absent from the lister is skipped (fail open)",
+			vmims: []*unstructured.Unstructured{
+				makeVMIM(ns, "m1", "vm-gone", "Succeeded", now.Add(-1*time.Hour)),
+			},
+			wantCounts: map[types.UID]int{},
+		},
+		{
+			description: "VMIMs for multiple VMIs are attributed independently",
+			vmims: []*unstructured.Unstructured{
+				makeVMIM(ns, "m1", "vm-a", "Succeeded", now.Add(-1*time.Hour)),
+				makeVMIM(ns, "m2", "vm-a", "Succeeded", now.Add(-2*time.Hour)),
+				makeVMIM(ns, "m3", "vm-b", "Succeeded", now.Add(-3*time.Hour)),
+			},
+			wantCounts: map[types.UID]int{"uid-a": 2, "uid-b": 1},
+		},
+		{
+			description: "entries are inserted oldest-first so countAndPrune binary search works",
+			// Three entries recorded in reverse-chronological order in the slice;
+			// after seeding the per-VMI slice must be sorted ascending.
+			vmims: []*unstructured.Unstructured{
+				makeVMIM(ns, "m1", "vm-a", "Succeeded", now.Add(-1*time.Hour)), // newest first
+				makeVMIM(ns, "m2", "vm-a", "Succeeded", now.Add(-10*time.Hour)),
+				makeVMIM(ns, "m3", "vm-a", "Succeeded", now.Add(-20*time.Hour)), // oldest last
+			},
+			wantCounts: map[types.UID]int{"uid-a": 3},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.description, func(t *testing.T) {
+			hist := newMigrationHistory()
+			items := make([]unstructured.Unstructured, len(tc.vmims))
+			for i, v := range tc.vmims {
+				items[i] = *v
+			}
+			seedHistoryFromVMIMs(items, lister, hist, window, klog.Background())
+
+			for uid, want := range tc.wantCounts {
+				if got := hist.countAndPrune(uid, window); got != want {
+					t.Errorf("count for %s = %d, want %d", uid, got, want)
+				}
+			}
+			// Also verify UIDs not in wantCounts have zero count.
+			for _, uid := range []types.UID{"uid-a", "uid-b"} {
+				if _, expected := tc.wantCounts[uid]; !expected {
+					if got := hist.countAndPrune(uid, window); got != 0 {
+						t.Errorf("count for %s = %d, want 0 (unexpected entry)", uid, got)
+					}
+				}
+			}
+		})
+	}
+
+	// Gap 2: verify ascending-sort invariant.
+	//
+	// Three VMIMs are listed newest-first in the input slice (as an API server
+	// might return them), but seedHistoryFromVMIMs must sort them oldest-first
+	// before recording so that countAndPrune's binary search works correctly.
+	//
+	// A 5h window must count only the 1h-ago entry (count=1).  If the slice
+	// were left in descending order, sort.Search would find 0 elements past the
+	// cutoff and return 3 instead.
+	t.Run("narrow window correctly prunes after out-of-order seeding", func(t *testing.T) {
+		hist := newMigrationHistory()
+		items := []unstructured.Unstructured{
+			*makeVMIM(ns, "m1", "vm-a", "Succeeded", now.Add(-1*time.Hour)),  // newest first in slice
+			*makeVMIM(ns, "m2", "vm-a", "Succeeded", now.Add(-10*time.Hour)), // middle
+			*makeVMIM(ns, "m3", "vm-a", "Succeeded", now.Add(-20*time.Hour)), // oldest last
+		}
+		// Seed with the 48h window so all three entries qualify.
+		seedHistoryFromVMIMs(items, lister, hist, 48*time.Hour, klog.Background())
+		// A 5h window should count only the 1h-ago entry.
+		if got := hist.countAndPrune("uid-a", 5*time.Hour); got != 1 {
+			t.Errorf("countAndPrune(5h) = %d, want 1; entries may not be sorted ascending after seeding", got)
+		}
+	})
+}
+
+// TestPreEvictionFilterAdaptiveAndBackoffCombined verifies that when migration
+// duration exceeds the configured cooldown, the duration — not the configured
+// floor — is used as the base for exponential doubling.
+//
+// Setup: 30-minute migration ended 40 minutes ago; configured cooldown = 15m.
+//
+//	Layer 1: max(15m, 30m) = 30m  (duration dominates).
+//	Layer 2, count=2: 30m × 2^1  = 60m.
+//
+// The 40-minute elapsed falls between the two values:
+//
+//	count=1 → 30m cooldown → 40m ≥ 30m → allowed.
+//	count=2 → 60m cooldown → 40m < 60m → blocked.
+//
+// If 15m (configured) were the doubling base, count=2 would yield 30m and the
+// VM would be incorrectly allowed.
+func TestPreEvictionFilterAdaptiveAndBackoffCombined(t *testing.T) {
+	const (
+		ns       = "default"
+		cooldown = 15 * time.Minute
+	)
+	now := time.Now()
+
+	vmiUID := types.UID("uid-vm-adaptive-backoff")
+	// 30-minute migration that ended 40 minutes ago.
+	vmi := makeVMI(ns, "vm-adaptive-backoff", completedState(
+		now.Add(-70*time.Minute), // started 70m ago
+		now.Add(-40*time.Minute), // ended 40m ago; duration = 30m
+	))
+	vmi.SetUID(vmiUID)
+	pod := makeVirtLauncherPod(ns, "vl-adaptive-backoff", "node-1", "vm-adaptive-backoff")
+
+	cases := []struct {
+		description  string
+		historyCount int
+		wantAllow    bool
+	}{
+		{
+			// count=1: no prior migrations; base 30m applies; elapsed 40m ≥ 30m → allowed.
+			description:  "count=1: duration-based cooldown (30m) satisfied by 40m elapsed",
+			historyCount: 1,
+			wantAllow:    true,
+		},
+		{
+			// count=2: one prior; 30m × 2^1 = 60m; elapsed 40m < 60m → blocked.
+			// If 15m were the base, 15m × 2^1 = 30m and the VM would be allowed.
+			description:  "count=2: duration is the doubling base (60m), blocks despite 40m elapsed",
+			historyCount: 2,
+			wantAllow:    false,
+		},
+		{
+			// count=3: two prior; 30m × 2^2 = 120m; elapsed 40m < 120m → blocked.
+			description:  "count=3: duration-based backoff compounds to 120m, still blocked",
+			historyCount: 3,
+			wantAllow:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.description, func(t *testing.T) {
+			plugin := newTestPlugin(t, cooldown, 0, vmi)
+			for i := 0; i < tc.historyCount; i++ {
+				plugin.history.record(vmiUID, now.Add(-time.Duration(i+1)*time.Hour))
+			}
+			got := plugin.PreEvictionFilter(pod)
+			if got != tc.wantAllow {
+				t.Errorf("PreEvictionFilter() = %v, want %v", got, tc.wantAllow)
+			}
+		})
+	}
+}
+
 func TestMigrationHistoryOnVMIUpdate(t *testing.T) {
 	const (
 		ns  = "default"
@@ -665,6 +898,21 @@ func TestMigrationHistoryOnVMIUpdate(t *testing.T) {
 		h.onVMIUpdate(first, second)
 		if got := h.countAndPrune(uid, 24*time.Hour); got != 1 {
 			t.Errorf("countAndPrune() = %d, want 1", got)
+		}
+	})
+
+	// Gap 1: clearing endTimestamp when a new migration starts must NOT be recorded.
+	// Real sequence: old VMI has a completed migration (endTimestamp = T1); new VMI
+	// starts a fresh migration, so endTimestamp disappears.  The guard
+	//   if newEnd == "" || newEnd == oldEnd { return }
+	// should fire and leave the history empty.
+	t.Run("endTimestamp clearing when migration restarts is not recorded", func(t *testing.T) {
+		h := newMigrationHistory()
+		old := withUID(makeVMI(ns, "vmi", completedState(now.Add(-3*time.Hour), now.Add(-2*time.Hour))))
+		new := withUID(makeVMI(ns, "vmi", inProgressState(now.Add(-1*time.Minute)))) // no endTimestamp
+		h.onVMIUpdate(old, new)
+		if got := h.countAndPrune(uid, 24*time.Hour); got != 0 {
+			t.Errorf("countAndPrune() = %d, want 0 (clearing endTimestamp must not be recorded)", got)
 		}
 	})
 }

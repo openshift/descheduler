@@ -7,6 +7,7 @@ godebug default=go1.26
 require (
 	github.com/client9/misspell v0.3.4
 	github.com/google/go-cmp v0.7.0
+	github.com/openshift-virtualization/kubevirt-descheduler-plugins v0.0.0-20260610140426-7cc61a423724
 	github.com/openshift/build-machinery-go v0.0.0-20260629141115-154a2b810491
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5

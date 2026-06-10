@@ -209,6 +209,10 @@ github.com/munnerz/goautoneg
 # github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f
 ## explicit
 github.com/mwitkow/go-conntrack
+# github.com/openshift-virtualization/kubevirt-descheduler-plugins v0.0.0-20260730151137-93719a52e758
+## explicit; go 1.24.0
+github.com/openshift-virtualization/kubevirt-descheduler-plugins
+github.com/openshift-virtualization/kubevirt-descheduler-plugins/plugins/kubevirtmigrationaware
 # github.com/openshift/build-machinery-go v0.0.0-20251023084048-5d77c1a5e5af
 ## explicit; go 1.22.0
 github.com/openshift/build-machinery-go

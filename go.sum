@@ -284,6 +284,8 @@ github.com/onsi/gomega v1.33.0/go.mod h1:+925n5YtiFsLzzafLUHzVMBpvvRAzrydIBiSIxj
 github.com/onsi/gomega v1.33.1/go.mod h1:U4R44UsT+9eLIaYRB2a5qajjtQYn0hauxvRm16AVYg0=
 github.com/onsi/gomega v1.38.2 h1:eZCjf2xjZAqe+LeWvKb5weQ+NcPwX84kqJ0cZNxok2A=
 github.com/onsi/gomega v1.38.2/go.mod h1:W2MJcYxRGV63b418Ai34Ud0hEdTVXq9NW9+Sx6uXf3k=
+github.com/openshift-virtualization/kubevirt-descheduler-plugins v0.0.0-20260610140426-7cc61a423724 h1:xJ7nSeCODaqyl221VtEm7gnmQJiaWNgXiIvEcB6gT94=
+github.com/openshift-virtualization/kubevirt-descheduler-plugins v0.0.0-20260610140426-7cc61a423724/go.mod h1:cABgvX3d5+5YVyjOESx2vQDw6dGiRNcu0k+OozebcXw=
 github.com/openshift/api v0.0.0-20230503133300-8bbcb7ca7183 h1:t/CahSnpqY46sQR01SoS+Jt0jtjgmhgE6lFmRnO4q70=
 github.com/openshift/api v0.0.0-20230503133300-8bbcb7ca7183/go.mod h1:4VWG+W22wrB4HfBL88P40DxLEpSOaiBVxUnfalfJo9k=
 github.com/openshift/build-machinery-go v0.0.0-20251023084048-5d77c1a5e5af h1:UiYYMi/CCV+kwWrXuXfuUSOY2yNXOpWpNVgHc6aLQlE=

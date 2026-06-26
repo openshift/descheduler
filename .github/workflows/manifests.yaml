@@ -21,7 +21,7 @@ jobs:
           node_image: kindest/node:${{ matrix.k8s-version }}
           kubectl_version: ${{ matrix.k8s-version }}
           config: test/kind-config.yaml
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true

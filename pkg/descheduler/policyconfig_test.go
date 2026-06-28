@@ -54,7 +54,6 @@ func (s scope) Meta() *conversion.Meta {
 	return s.meta
 }
 
-// createDefaultPrometheusRoute creates a fake prometheus-k8s route with the given hostname
 func createDefaultPrometheusRoute(hostname string) *routev1.Route {
 	return &routev1.Route{
 		ObjectMeta: metav1.ObjectMeta{
@@ -595,7 +594,7 @@ profiles:
           - "DefaultEvictor"
       preEvictionFilter:
         enabled:
-          - "DefaultEvictor" 
+          - "DefaultEvictor"
 `),
 			result: &api.DeschedulerPolicy{
 				Profiles: []api.DeschedulerProfile{

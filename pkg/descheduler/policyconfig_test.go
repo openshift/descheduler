@@ -22,7 +22,11 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	routev1 "github.com/openshift/api/route/v1"
+	routeclient "github.com/openshift/client-go/route/clientset/versioned"
+	fakerouteclient "github.com/openshift/client-go/route/clientset/versioned/fake"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/conversion"
 	fakeclientset "k8s.io/client-go/kubernetes/fake"
 	utilptr "k8s.io/utils/ptr"
@@ -50,8 +54,22 @@ func (s scope) Meta() *conversion.Meta {
 	return s.meta
 }
 
+// createDefaultPrometheusRoute creates a fake prometheus-k8s route with the given hostname
+func createDefaultPrometheusRoute(hostname string) *routev1.Route {
+	return &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "prometheus-k8s",
+			Namespace: "openshift-monitoring",
+		},
+		Spec: routev1.RouteSpec{
+			Host: hostname,
+		},
+	}
+}
+
 func TestDecodeVersionedPolicy(t *testing.T) {
 	client := fakeclientset.NewSimpleClientset()
+	routeClient := fakerouteclient.NewSimpleClientset(createDefaultPrometheusRoute("example.com"))
 	SetupPlugins()
 
 	type testCase struct {
@@ -146,7 +164,7 @@ profiles:
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			result, err := decode("filename", tc.policy, client, pluginregistry.PluginRegistry)
+			result, err := decode("filename", tc.policy, client, routeClient, pluginregistry.PluginRegistry)
 			if err != nil {
 				if tc.err == nil {
 					t.Errorf("unexpected error: %s.", err.Error())
@@ -164,9 +182,11 @@ profiles:
 
 func TestValidateDeschedulerConfiguration(t *testing.T) {
 	SetupPlugins()
+	client := fakeclientset.NewSimpleClientset()
 	type testCase struct {
 		description       string
 		deschedulerPolicy api.DeschedulerPolicy
+		prometheusRoute   *routev1.Route
 		result            error
 	}
 	testCases := []testCase{
@@ -273,6 +293,7 @@ func TestValidateDeschedulerConfiguration(t *testing.T) {
 					},
 				},
 			},
+			prometheusRoute: createDefaultPrometheusRoute("example.com"),
 			result: fmt.Errorf("prometheus authToken secret is expected to be set when authToken field is"),
 		},
 		{
@@ -290,6 +311,7 @@ func TestValidateDeschedulerConfiguration(t *testing.T) {
 					},
 				},
 			},
+			prometheusRoute: createDefaultPrometheusRoute("example.com"),
 			result: fmt.Errorf("prometheus authToken secret reference does not set both namespace and name"),
 		},
 		{
@@ -309,6 +331,7 @@ func TestValidateDeschedulerConfiguration(t *testing.T) {
 					},
 				},
 			},
+			prometheusRoute: createDefaultPrometheusRoute("example.com"),
 			result: fmt.Errorf("prometheus authToken secret reference does not set both namespace and name"),
 		},
 		{
@@ -328,6 +351,7 @@ func TestValidateDeschedulerConfiguration(t *testing.T) {
 					},
 				},
 			},
+			prometheusRoute: createDefaultPrometheusRoute("example.com"),
 			result: fmt.Errorf("prometheus authToken secret reference does not set both namespace and name"),
 		},
 		{
@@ -348,12 +372,63 @@ func TestValidateDeschedulerConfiguration(t *testing.T) {
 					},
 				},
 			},
+			prometheusRoute: createDefaultPrometheusRoute("example.com"),
+		},
+		{
+			description: "prometheus URL hostname does not match route",
+			deschedulerPolicy: api.DeschedulerPolicy{
+				MetricsProviders: []api.MetricsProvider{
+					{
+						Source: api.PrometheusMetrics,
+						Prometheus: &api.Prometheus{
+							URL: "https://wrong-hostname.com:443",
+							AuthToken: &api.AuthToken{
+								SecretReference: &api.SecretReference{
+									Name:      "secretname",
+									Namespace: "secretnamespace",
+								},
+							},
+						},
+					},
+				},
+			},
+			prometheusRoute: createDefaultPrometheusRoute("example.com"),
+			result: fmt.Errorf("prometheus URL hostname \"wrong-hostname.com\" does not match the prometheus-k8s route hostname \"example.com\""),
+		},
+		{
+			description: "prometheus URL uses http instead of https",
+			deschedulerPolicy: api.DeschedulerPolicy{
+				MetricsProviders: []api.MetricsProvider{
+					{
+						Source: api.PrometheusMetrics,
+						Prometheus: &api.Prometheus{
+							URL: "http://example.com:80",
+							AuthToken: &api.AuthToken{
+								SecretReference: &api.SecretReference{
+									Name:      "secretname",
+									Namespace: "secretnamespace",
+								},
+							},
+						},
+					},
+				},
+			},
+			prometheusRoute: createDefaultPrometheusRoute("example.com"),
+			result: fmt.Errorf("prometheus URL must use https scheme"),
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			result := validateDeschedulerConfiguration(tc.deschedulerPolicy, pluginregistry.PluginRegistry)
+			// Create route client with the test case's prometheus route
+			var routeClient routeclient.Interface
+			if tc.prometheusRoute != nil {
+				routeClient = fakerouteclient.NewSimpleClientset(tc.prometheusRoute)
+			} else {
+				routeClient = fakerouteclient.NewSimpleClientset()
+			}
+
+			result := validateDeschedulerConfiguration(tc.deschedulerPolicy, pluginregistry.PluginRegistry, client, routeClient)
 			if result == nil && tc.result != nil || result != nil && tc.result == nil {
 				t.Errorf("test '%s' failed. expected \n'%s', got \n'%s'", tc.description, tc.result, result)
 			} else if result == nil && tc.result == nil {
@@ -367,6 +442,7 @@ func TestValidateDeschedulerConfiguration(t *testing.T) {
 
 func TestDecodeDefaults(t *testing.T) {
 	client := fakeclientset.NewSimpleClientset()
+	routeClient := fakerouteclient.NewSimpleClientset(createDefaultPrometheusRoute("example.com"))
 	SetupPlugins()
 	type testCase struct {
 		description string
@@ -808,7 +884,7 @@ profiles:
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			result, err := decode("filename", tc.policy, client, pluginregistry.PluginRegistry)
+			result, err := decode("filename", tc.policy, client, routeClient, pluginregistry.PluginRegistry)
 			if err != nil {
 				if tc.err == nil {
 					t.Fatalf("unexpected error: %s.", err.Error())

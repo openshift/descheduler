@@ -26,6 +26,7 @@ import (
 	"os"
 	"time"
 
+	routeclient "github.com/openshift/client-go/route/clientset/versioned"
 	promapi "github.com/prometheus/client_golang/api"
 	"github.com/prometheus/common/config"
 
@@ -89,6 +90,15 @@ func CreateMetricsClient(clientConnection componentbaseconfig.ClientConnectionCo
 
 	// Create the metrics clientset to access the metrics.k8s.io API
 	return metricsclient.NewForConfig(cfg)
+}
+
+func CreateRouteClient(clientConnection componentbaseconfig.ClientConnectionConfiguration, userAgt string) (routeclient.Interface, error) {
+	cfg, err := createConfig(clientConnection, userAgt)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create config: %v", err)
+	}
+
+	return routeclient.NewForConfig(cfg)
 }
 
 func GetMasterFromKubeconfig(filename string) (string, error) {

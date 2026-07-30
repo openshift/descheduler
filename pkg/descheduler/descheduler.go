@@ -24,6 +24,7 @@ import (
 	"time"
 
 	promapi "github.com/prometheus/client_golang/api"
+	routeclient "github.com/openshift/client-go/route/clientset/versioned"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -313,14 +314,14 @@ func Run(ctx context.Context, rs *options.DeschedulerServer) error {
 	if rs.KubeconfigFile != "" && clientConnection.Kubeconfig == "" {
 		clientConnection.Kubeconfig = rs.KubeconfigFile
 	}
-	rsclient, eventClient, err := createClients(clientConnection)
+	rsclient, eventClient, routeClient, err := createClients(clientConnection)
 	if err != nil {
 		return err
 	}
 	rs.Client = rsclient
 	rs.EventClient = eventClient
 
-	deschedulerPolicy, err := LoadPolicyConfig(rs.PolicyConfigFile, rs.Client, pluginregistry.PluginRegistry)
+	deschedulerPolicy, err := LoadPolicyConfig(rs.PolicyConfigFile, rs.Client, routeClient, pluginregistry.PluginRegistry)
 	if err != nil {
 		return err
 	}
@@ -560,18 +561,23 @@ func GetPluginConfig(pluginName string, pluginConfigs []api.PluginConfig) (*api.
 	return nil, 0
 }
 
-func createClients(clientConnection componentbaseconfig.ClientConnectionConfiguration) (clientset.Interface, clientset.Interface, error) {
+func createClients(clientConnection componentbaseconfig.ClientConnectionConfiguration) (clientset.Interface, clientset.Interface, routeclient.Interface, error) {
 	kClient, err := client.CreateClient(clientConnection, "descheduler")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	eventClient, err := client.CreateClient(clientConnection, "")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	return kClient, eventClient, nil
+	routeClient, err := client.CreateRouteClient(clientConnection, "descheduler")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return kClient, eventClient, routeClient, nil
 }
 
 func trimManagedFields(obj interface{}) (interface{}, error) {

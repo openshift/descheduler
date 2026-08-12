@@ -21,7 +21,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
+	routeclient "github.com/openshift/client-go/route/clientset/versioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,7 +39,7 @@ import (
 	"sigs.k8s.io/descheduler/pkg/utils"
 )
 
-func LoadPolicyConfig(policyConfigFile string, client clientset.Interface, registry pluginregistry.Registry) (*api.DeschedulerPolicy, error) {
+func LoadPolicyConfig(policyConfigFile string, client clientset.Interface, routeClient routeclient.Interface, registry pluginregistry.Registry) (*api.DeschedulerPolicy, error) {
 	if policyConfigFile == "" {
 		klog.V(1).InfoS("Policy config file not specified")
 		return nil, nil
@@ -47,10 +50,10 @@ func LoadPolicyConfig(policyConfigFile string, client clientset.Interface, regis
 		return nil, fmt.Errorf("failed to read policy config file %q: %+v", policyConfigFile, err)
 	}
 
-	return decode(policyConfigFile, policy, client, registry)
+	return decode(policyConfigFile, policy, client, routeClient, registry)
 }
 
-func decode(policyConfigFile string, policy []byte, client clientset.Interface, registry pluginregistry.Registry) (*api.DeschedulerPolicy, error) {
+func decode(policyConfigFile string, policy []byte, client clientset.Interface, routeClient routeclient.Interface, registry pluginregistry.Registry) (*api.DeschedulerPolicy, error) {
 	internalPolicy := &api.DeschedulerPolicy{}
 	var err error
 
@@ -59,7 +62,7 @@ func decode(policyConfigFile string, policy []byte, client clientset.Interface, 
 		return nil, fmt.Errorf("failed decoding descheduler's policy config %q: %v", policyConfigFile, err)
 	}
 
-	err = validateDeschedulerConfiguration(*internalPolicy, registry)
+	err = validateDeschedulerConfiguration(*internalPolicy, registry, client, routeClient)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +144,7 @@ func setDefaultEvictor(profile api.DeschedulerProfile, client clientset.Interfac
 	return profile, nil
 }
 
-func validateDeschedulerConfiguration(in api.DeschedulerPolicy, registry pluginregistry.Registry) error {
+func validateDeschedulerConfiguration(in api.DeschedulerPolicy, registry pluginregistry.Registry, client clientset.Interface, routeClient routeclient.Interface) error {
 	var errorsInPolicy []error
 	for _, profile := range in.Profiles {
 		for _, pluginConfig := range profile.PluginConfigs {
@@ -176,8 +179,12 @@ func validateDeschedulerConfiguration(in api.DeschedulerPolicy, registry pluginr
 		} else {
 			if prometheusConfig.Prometheus.URL == "" {
 				errorsInPolicy = append(errorsInPolicy, fmt.Errorf("prometheus URL is required when prometheus is enabled"))
-			} else if _, err := url.Parse(prometheusConfig.Prometheus.URL); err != nil {
+			} else if u, err := url.Parse(prometheusConfig.Prometheus.URL); err != nil {
 				errorsInPolicy = append(errorsInPolicy, fmt.Errorf("error parsing prometheus URL: %v", err))
+			} else if u.Scheme != "https" {
+				errorsInPolicy = append(errorsInPolicy, fmt.Errorf("prometheus URL must use https scheme"))
+			} else if err := validatePrometheusURLIsRoute(u, routeClient); err != nil {
+				errorsInPolicy = append(errorsInPolicy, err)
 			}
 
 			if prometheusConfig.Prometheus.AuthToken != nil {
@@ -192,4 +199,25 @@ func validateDeschedulerConfiguration(in api.DeschedulerPolicy, registry pluginr
 	}
 
 	return utilerrors.NewAggregate(errorsInPolicy)
+}
+
+func validatePrometheusURLIsRoute(u *url.URL, routeClient routeclient.Interface) error {
+	// Extract hostname from URL (remove port if present)
+	hostname := u.Host
+	if colonIndex := strings.Index(hostname, ":"); colonIndex != -1 {
+		hostname = hostname[:colonIndex]
+	}
+
+	ctx := context.TODO()
+	route, err := routeClient.RouteV1().Routes("openshift-monitoring").Get(ctx, "prometheus-k8s", metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get prometheus-k8s route from openshift-monitoring namespace: %v", err)
+	}
+
+	if route.Spec.Host != hostname {
+		return fmt.Errorf("prometheus URL hostname %q does not match the prometheus-k8s route hostname %q", hostname, route.Spec.Host)
+	}
+
+	klog.V(2).Infof("Prometheus URL hostname %q matches route %s/%s", hostname, route.Namespace, route.Name)
+	return nil
 }

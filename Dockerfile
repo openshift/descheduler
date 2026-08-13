@@ -3,7 +3,7 @@ WORKDIR /go/src/github.com/openshift/descheduler
 COPY . .
 RUN make build --warn-undefined-variables
 
-FROM registry.redhat.io/rhel9-4-els/rhel-minimal:9.4-1779859461
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest@sha256:7c372902c8d211db2d25c8277ba534a73b92742a334874dced829a63b0f21221
 COPY --from=builder /go/src/github.com/openshift/descheduler/descheduler /usr/bin/
 RUN mkdir /licenses
 COPY --from=builder /go/src/github.com/openshift/descheduler/LICENSE /licenses/.
@@ -14,8 +14,8 @@ LABEL io.k8s.display-name="Descheduler based on RHEL 9" \
       com.redhat.component="descheduler-container" \
       name="kube-descheduler-operator/descheduler-rhel9" \
       cpe="cpe:/a:redhat:kube_descheduler_operator:4.14::el9" \
-      release="4.14.2" \
-      version="4.14.2" \
+      release="4.14.4" \
+      version="4.14.4" \
       url="https://github.com/openshift/descheduler" \
       vendor="Red Hat, Inc." \
       summary="descheduler" \

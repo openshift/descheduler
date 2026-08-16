@@ -1,4 +1,4 @@
-FROM brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.25 as builder
+FROM brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_golang_1.26 as builder
 WORKDIR /go/src/github.com/openshift/descheduler
 COPY . .
 RUN make build --warn-undefined-variables
@@ -14,8 +14,8 @@ LABEL io.k8s.display-name="Descheduler based on RHEL 9" \
       com.redhat.component="descheduler-container" \
       name="kube-descheduler-operator/descheduler-rhel9" \
       cpe="cpe:/a:redhat:kube_descheduler_operator:5.4::el9" \
-      release="5.4.0" \
-      version="5.4.0" \
+      release="5.4.3" \
+      version="5.4.3" \
       url="https://github.com/openshift/descheduler" \
       vendor="Red Hat, Inc." \
       summary="descheduler" \

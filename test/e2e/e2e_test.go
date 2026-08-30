@@ -132,7 +132,8 @@ func deschedulerDeployment(testName string) *appsv1.Deployment {
 					PriorityClassName:  "system-cluster-critical",
 					ServiceAccountName: "descheduler-sa",
 					SecurityContext: &v1.PodSecurityContext{
-						RunAsNonRoot: utilptr.To(true),
+						// RunAsNonRoot: utilptr.To(true),
+						RunAsUser: utilptr.To(int64(1000750000)),
 						SeccompProfile: &v1.SeccompProfile{
 							Type: v1.SeccompProfileTypeRuntimeDefault,
 						},

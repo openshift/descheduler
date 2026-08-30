@@ -7,3 +7,5 @@ RUN go build -ldflags "-X ${prefix}.version=${OS_GIT_VERSION} -X ${prefix}.build
 FROM registry.ci.openshift.org/ocp/5.0:base-rhel9
 COPY --from=builder /go/src/sigs.k8s.io/descheduler/descheduler /usr/bin/
 CMD ["/usr/bin/descheduler"]
+
+USER nobody

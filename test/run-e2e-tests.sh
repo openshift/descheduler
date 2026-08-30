@@ -18,50 +18,26 @@ set -x
 set -o errexit
 set -o nounset
 
-BASEDIR=$(dirname "$0")
-# shellcheck source=test/lib/e2e-common.sh
-source "${BASEDIR}/lib/e2e-common.sh"
-# shellcheck source=test/lib/e2e-versions.env
-source "${BASEDIR}/lib/e2e-versions.env"
-REPO_ROOT="$(e2e_repo_root "${BASEDIR}")"
-
-# Set to empty if unbound/empty
-SKIP_INSTALL=${SKIP_INSTALL:-}
-KIND_E2E=${KIND_E2E:-}
-CONTAINER_ENGINE=${CONTAINER_ENGINE:-docker}
-KIND_SUDO=${KIND_SUDO:-}
-SKIP_KUBECTL_INSTALL=${SKIP_KUBECTL_INSTALL:-}
-SKIP_KIND_INSTALL=${SKIP_KIND_INSTALL:-}
-SKIP_KUBEVIRT_INSTALL=${SKIP_KUBEVIRT_INSTALL:-}
-SKIP_METRICS_SERVER_INSTALL=${SKIP_METRICS_SERVER_INSTALL:-}
-KUBEVIRT_VERSION=${KUBEVIRT_VERSION:-$(grep 'kubevirt.io/api ' "${REPO_ROOT}/go.mod" | awk '{print $2}')}
-
-# Build a descheduler image
-IMAGE_TAG=v$(date +%Y%m%d)-$(git describe --tags)
-VERSION="${IMAGE_TAG}" make -C "${REPO_ROOT}" image
-
-export DESCHEDULER_IMAGE="docker.io/library/descheduler:${IMAGE_TAG}"
-echo "DESCHEDULER_IMAGE: ${DESCHEDULER_IMAGE}"
-
-if [ -n "${KIND_E2E}" ]; then
-  # shellcheck source=test/lib/setup-kind.sh
-  source "${BASEDIR}/lib/setup-kind.sh"
-fi
+REGISTRY=$(echo ${RELEASE_IMAGE_LATEST} | cut -d"/" -f1)
+DESCHEDULER_IMAGE="${REGISTRY}/${NAMESPACE}/pipeline:descheduler"
 
 # Deploy rbac, sa and binding for a descheduler running through a deployment
-kubectl apply -f "${REPO_ROOT}/kubernetes/base/rbac.yaml"
+oc apply -f kubernetes/base/rbac.yaml
 
-trap 'collect_logs default kubevirt' ERR
+collect_logs() {
+  echo "Collecting pods and logs"
+  kubectl get pods -n default
 
-if [ -z "${SKIP_KUBEVIRT_INSTALL}" ]; then
-  # shellcheck source=test/lib/install-kubevirt.sh
-  source "${BASEDIR}/lib/install-kubevirt.sh"
-fi
+  for pod in $(kubectl get pods -n default -o name); do
+    echo "Logs for ${pod}"
+    kubectl logs -n default ${pod}
+  done
+}
 
-if [ -z "${SKIP_METRICS_SERVER_INSTALL}" ]; then
-  # shellcheck source=test/lib/install-metrics-server.sh
-  source "${BASEDIR}/lib/install-metrics-server.sh"
-fi
+trap "collect_logs" ERR
 
 PRJ_PREFIX="sigs.k8s.io/descheduler"
-GOEXPERIMENT="${GOEXPERIMENT:-none}" go test ${PRJ_PREFIX}/test/e2e/ -v -timeout 0 --args --descheduler-image "${DESCHEDULER_IMAGE}" --kubevirt-version-tag "${KUBEVIRT_VERSION}" --pod-run-as-user-id 1000 --pod-run-as-group-id 1000
+# Skip tests that are currently not supported
+TESTS=$(go test ${PRJ_PREFIX}/test/e2e -list '.' --args --descheduler-image ${DESCHEDULER_IMAGE} | grep -vE "TestLowNodeUtilizationKubernetesMetrics|TestLiveMigrationInBackground" | grep Test | sed -z 's/\n\(.\)/$|^\1/g')
+TESTS="^${TESTS}\$"
+go test ./test/e2e/ -v -timeout 0 -run "${TESTS}" --args --descheduler-image ${DESCHEDULER_IMAGE}

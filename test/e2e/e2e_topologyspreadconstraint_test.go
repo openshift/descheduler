@@ -77,6 +77,8 @@ func TestTopologySpreadConstraint(t *testing.T) {
 		t.Errorf("Error listing node with %v", err)
 	}
 	_, workerNodes := splitNodesAndWorkerNodes(nodeList.Items)
+	lenWorkerNodes := len(workerNodes)
+
 	t.Log("Creating testing namespace")
 	testNamespace := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "e2e-" + strings.ToLower(t.Name())}}
 	if _, err := clientSet.CoreV1().Namespaces().Create(ctx, testNamespace, metav1.CreateOptions{}); err != nil {
@@ -93,7 +95,7 @@ func TestTopologySpreadConstraint(t *testing.T) {
 		{
 			name:                    "test-topology-spread-hard-constraint",
 			expectedEvictedPodCount: 1,
-			replicaCount:            4,
+			replicaCount:            lenWorkerNodes * 2,
 			topologySpreadConstraint: v1.TopologySpreadConstraint{
 				LabelSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
@@ -108,7 +110,7 @@ func TestTopologySpreadConstraint(t *testing.T) {
 		{
 			name:                    "test-topology-spread-soft-constraint",
 			expectedEvictedPodCount: 1,
-			replicaCount:            4,
+			replicaCount:            lenWorkerNodes * 2,
 			topologySpreadConstraint: v1.TopologySpreadConstraint{
 				LabelSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
@@ -123,7 +125,7 @@ func TestTopologySpreadConstraint(t *testing.T) {
 		{
 			name:                    "test-node-taints-policy-honor",
 			expectedEvictedPodCount: 1,
-			replicaCount:            4,
+			replicaCount:            lenWorkerNodes * 2,
 			topologySpreadConstraint: v1.TopologySpreadConstraint{
 				LabelSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
@@ -139,7 +141,7 @@ func TestTopologySpreadConstraint(t *testing.T) {
 		{
 			name:                    "test-node-affinity-policy-ignore",
 			expectedEvictedPodCount: 1,
-			replicaCount:            4,
+			replicaCount:            lenWorkerNodes * 2,
 			topologySpreadConstraint: v1.TopologySpreadConstraint{
 				LabelSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
@@ -155,7 +157,7 @@ func TestTopologySpreadConstraint(t *testing.T) {
 		{
 			name:                    "test-match-label-keys",
 			expectedEvictedPodCount: 0,
-			replicaCount:            4,
+			replicaCount:            lenWorkerNodes * 2,
 			topologySpreadConstraint: v1.TopologySpreadConstraint{
 				LabelSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{

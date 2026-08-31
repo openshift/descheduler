@@ -26,9 +26,8 @@ IMAGE_REGISTRY :=registry.svc.ci.openshift.org
 # $4 - context directory for image build
 $(call build-image,descheduler,$(CI_IMAGE_REGISTRY)/ocp/4.12:descheduler,./images/ci/Dockerfile,.)
 
-test-e2e: GO_TEST_PACKAGES :=./test/e2e
-test-e2e: GO_TEST_FLAGS :=-v
-test-e2e: test-unit
+test-e2e:
+	./test/run-e2e-tests.sh
 .PHONY: test-e2e
 
 update-version:

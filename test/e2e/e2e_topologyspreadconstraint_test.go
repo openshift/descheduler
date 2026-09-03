@@ -99,7 +99,7 @@ func TestTopologySpreadConstraint(t *testing.T) {
 		t.Logf("Found %d worker nodes in %d unique zones, using zone topology", lenWorkerNodes, numZones)
 	} else {
 		// Single-zone or no-zone cluster: fall back to node topology
-		topologyKey = "kubernetes.io/hostname"
+		topologyKey = v1.LabelHostname
 		numDomains = lenWorkerNodes
 		t.Logf("Found %d worker nodes in %d zone(s), falling back to node (hostname) topology", lenWorkerNodes, numZones)
 	}
@@ -206,6 +206,18 @@ func TestTopologySpreadConstraint(t *testing.T) {
 				// Add tolerations so pods can be scheduled and rescheduled on all nodes (in case some of them are tainted)
 				d.Spec.Template.Spec.Tolerations = []v1.Toleration{
 					{Operator: v1.TolerationOpExists},
+				}
+				d.Spec.Template.Spec.Affinity = &v1.Affinity{
+					NodeAffinity: &v1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &v1.NodeSelector{
+							NodeSelectorTerms: []v1.NodeSelectorTerm{{
+								MatchExpressions: []v1.NodeSelectorRequirement{{
+									Key:      "node-role.kubernetes.io/control-plane",
+									Operator: v1.NodeSelectorOpDoesNotExist,
+								}},
+							}},
+						},
+					},
 				}
 			})
 			if _, err := clientSet.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{}); err != nil {
@@ -359,7 +371,7 @@ func TestTopologySpreadConstraint(t *testing.T) {
 
 				skewVal = getSkewValPodDistribution(topologyPodCountMap)
 				if skewVal > int(tc.topologySpreadConstraint.MaxSkew) {
-					t.Errorf("Pod distribution for %s is still violating the max skew of %d as it is %d", tc.name, tc.topologySpreadConstraint.MaxSkew, skewVal)
+					t.Logf("Pod distribution for %s is still violating the max skew of %d as it is %d", tc.name, tc.topologySpreadConstraint.MaxSkew, skewVal)
 					return false, nil
 				}
 

@@ -103,13 +103,15 @@ func TestLeaderElection(t *testing.T) {
 	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace2.Name, metav1.DeleteOptions{})
 
 	testLabel := map[string]string{"test": "leaderelection", "name": "test-leaderelection"}
-	deployment1 := buildTestDeployment("leaderelection", ns1, 5, testLabel, nil)
+	runAsU1, runAsG1 := getRunAsForNamespace(ctx, clientSet, ns1)
+	runAsU2, runAsG2 := getRunAsForNamespace(ctx, clientSet, ns2)
+	deployment1 := buildTestDeployment("leaderelection", ns1, 5, testLabel, nil, &runAsU1, &runAsG1)
 	err = createDeployment(t, ctx, clientSet, deployment1)
 	if err != nil {
 		t.Fatalf("create deployment 1: %v", err)
 	}
 
-	deployment2 := buildTestDeployment("leaderelection", ns2, 5, testLabel, nil)
+	deployment2 := buildTestDeployment("leaderelection", ns2, 5, testLabel, nil, &runAsU2, &runAsG2)
 	err = createDeployment(t, ctx, clientSet, deployment2)
 	if err != nil {
 		t.Fatalf("create deployment 2: %v", err)
@@ -234,7 +236,8 @@ func startDeschedulerServer(t *testing.T, ctx context.Context, clientSet clients
 		t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
 	}
 
-	deschedulerDeploymentObj := deschedulerDeployment(testName)
+	runAsU, runAsG := getRunAsForNamespace(ctx, clientSet, "kube-system")
+	deschedulerDeploymentObj := deschedulerDeployment(testName, &runAsU, &runAsG)
 	deschedulerDeploymentObj.Name = fmt.Sprintf("%s-%s", deschedulerDeploymentObj.Name, testName)
 	args := deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args
 	deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args = append(args, "--leader-elect", "--leader-elect-retry-period", "1s")
@@ -252,7 +255,7 @@ func startDeschedulerServer(t *testing.T, ctx context.Context, clientSet clients
 	}
 
 	t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
-	_, err = clientSet.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Create(ctx, deschedulerDeploymentObj, metav1.CreateOptions{})
+	_, err = createDeschedulerDeployment(ctx, t, clientSet, deschedulerDeploymentObj)
 	if err != nil {
 		t.Fatalf("Error creating %q deployment: %v", deschedulerDeploymentObj.Name, err)
 	}

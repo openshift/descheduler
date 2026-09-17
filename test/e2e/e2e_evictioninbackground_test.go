@@ -344,7 +344,7 @@ func observeLiveMigration(t *testing.T, ctx context.Context, kubeClient clientse
 
 func createAndWaitForDeschedulerRunning(t *testing.T, ctx context.Context, kubeClient clientset.Interface, deschedulerDeploymentObj *appsv1.Deployment) string {
 	klog.Infof("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
-	_, err := kubeClient.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Create(ctx, deschedulerDeploymentObj, metav1.CreateOptions{})
+	_, err := createDeschedulerDeployment(ctx, t, kubeClient, deschedulerDeploymentObj)
 	if err != nil {
 		t.Fatalf("Error creating %q deployment: %v", deschedulerDeploymentObj.Name, err)
 	}
@@ -473,7 +473,8 @@ func TestLiveMigrationInBackground(t *testing.T) {
 		}
 	}()
 
-	deschedulerDeploymentObj := deschedulerDeployment("kube-system")
+	runAsU, runAsG := getRunAsForNamespace(ctx, kubeClient, "kube-system")
+	deschedulerDeploymentObj := deschedulerDeployment("kube-system", &runAsU, &runAsG)
 	// Set the descheduling interval to 10s
 	deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args = []string{"--policy-config-file", "/policy-dir/policy.yaml", "--descheduling-interval", "10s", "--v", "4", "--feature-gates", "EvictionsInBackground=true"}
 
@@ -515,7 +516,7 @@ func TestLiveMigrationInBackground(t *testing.T) {
 	policy.MaxNoOfPodsToEvictPerNamespace = nil
 	updateDeschedulerPolicy(t, ctx, kubeClient, policy)
 
-	deschedulerDeploymentObj = deschedulerDeployment("kube-system")
+	deschedulerDeploymentObj = deschedulerDeployment("kube-system", &runAsU, &runAsG)
 	deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args = []string{"--policy-config-file", "/policy-dir/policy.yaml", "--descheduling-interval", "100m", "--v", "4", "--feature-gates", "EvictionsInBackground=true"}
 	deschedulerPodName = createAndWaitForDeschedulerRunning(t, ctx, kubeClient, deschedulerDeploymentObj)
 

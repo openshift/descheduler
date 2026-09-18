@@ -1859,7 +1859,7 @@ func createBalancedPodForNodes(
 				Containers: []v1.Container{
 					{
 						Name:  "pause",
-						Image: "registry.k8s.io/pause",
+						Image: "registry.redhat.io/rhel8/pause",
 						Resources: v1.ResourceRequirements{
 							Limits:   needCreateResource,
 							Requests: needCreateResource,

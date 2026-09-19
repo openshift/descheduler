@@ -255,6 +255,24 @@ func TestProtectPodsWithPVC(t *testing.T) {
 				defer cli.CoreV1().PersistentVolumeClaims(namespace.Name).Delete(ctx, pvc.Name, metav1.DeleteOptions{})
 			}
 
+			for _, pvcWait := range tc.pvcs {
+				pvcName := pvcWait.Name
+				if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+					vol, err := cli.CoreV1().PersistentVolumeClaims(namespace.Name).Get(ctx, pvcName, metav1.GetOptions{})
+					if err != nil {
+						return false, err
+					}
+					if vol.Status.Phase == v1.ClaimBound {
+						return true, nil
+					}
+					t.Logf("waiting for PVC %s/%s to bind, phase=%s", namespace.Name, pvcName, vol.Status.Phase)
+					return false, nil
+				}); err != nil {
+					t.Fatalf("PVC %s/%s did not reach Bound: %v", namespace.Name, pvcName, err)
+				}
+			}
+
+			runAsUser, runAsGroup := getRunAsForNamespace(ctx, cli, namespace.Name)
 			deploy := buildTestDeployment(
 				"restart-pod",
 				namespace.Name,
@@ -264,6 +282,7 @@ func TestProtectPodsWithPVC(t *testing.T) {
 					deployment.Spec.Template.Spec.Containers[0].Command = []string{"/bin/sh"}
 					deployment.Spec.Template.Spec.Containers[0].Args = []string{"-c", "sleep 1s && exit 1"}
 				},
+				&runAsUser, &runAsGroup,
 			)
 			deploy.Spec.Template.Spec.Volumes = tc.volumes
 
@@ -305,11 +324,10 @@ func TestProtectPodsWithPVC(t *testing.T) {
 				}
 			}()
 
-			desdep := deschedulerDeployment(namespace.Name)
+			runAsU, runAsG := getRunAsForNamespace(ctx, cli, "kube-system")
+			desdep := deschedulerDeployment(namespace.Name, &runAsU, &runAsG)
 			t.Logf("creating descheduler deployment %v", desdep.Name)
-			if _, err := cli.AppsV1().Deployments(desdep.Namespace).Create(
-				ctx, desdep, metav1.CreateOptions{},
-			); err != nil {
+			if _, err := createDeschedulerDeployment(ctx, t, cli, desdep); err != nil {
 				t.Fatalf("error creating %q deployment: %v", desdep.Name, err)
 			}
 

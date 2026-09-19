@@ -78,7 +78,7 @@ func TestTopologySpreadConstraint(t *testing.T) {
 	}
 	_, workerNodes := splitNodesAndWorkerNodes(nodeList.Items)
 	t.Log("Creating testing namespace")
-	testNamespace := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "e2e-" + strings.ToLower(t.Name())}}
+	testNamespace := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: uniqueE2ENamespace("e2e-" + strings.ToLower(t.Name()))}}
 	if _, err := clientSet.CoreV1().Namespaces().Create(ctx, testNamespace, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Unable to create ns %v", testNamespace.Name)
 	}
@@ -174,9 +174,10 @@ func TestTopologySpreadConstraint(t *testing.T) {
 			t.Logf("Creating Deployment %s with %d replicas", tc.name, tc.replicaCount)
 			deployLabels := tc.topologySpreadConstraint.LabelSelector.DeepCopy().MatchLabels
 			deployLabels["name"] = tc.name
+			runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
 			deployment := buildTestDeployment(tc.name, testNamespace.Name, int32(tc.replicaCount), deployLabels, func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.TopologySpreadConstraints = []v1.TopologySpreadConstraint{tc.topologySpreadConstraint}
-			})
+			}, &runAsUser, &runAsGroup)
 			if _, err := clientSet.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{}); err != nil {
 				t.Fatalf("Error creating Deployment %s %v", tc.name, err)
 			}
@@ -192,7 +193,7 @@ func TestTopologySpreadConstraint(t *testing.T) {
 			violatorDeployLabels["name"] = violatorDeploymentName
 			violatorDeployment := buildTestDeployment(violatorDeploymentName, testNamespace.Name, tc.topologySpreadConstraint.MaxSkew+1, violatorDeployLabels, func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.NodeSelector = map[string]string{zoneTopologyKey: workerNodes[0].Labels[zoneTopologyKey]}
-			})
+			}, &runAsUser, &runAsGroup)
 			if _, err := clientSet.AppsV1().Deployments(violatorDeployment.Namespace).Create(ctx, violatorDeployment, metav1.CreateOptions{}); err != nil {
 				t.Fatalf("Error creating Deployment %s: %v", violatorDeployment.Name, err)
 			}
@@ -237,9 +238,10 @@ func TestTopologySpreadConstraint(t *testing.T) {
 					t.Fatalf("Unable to delete %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
 				}
 			}()
-			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name)
+			runAsU, runAsG := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name, &runAsU, &runAsG)
 			t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
-			_, err = clientSet.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Create(ctx, deschedulerDeploymentObj, metav1.CreateOptions{})
+			_, err = createDeschedulerDeployment(ctx, t, clientSet, deschedulerDeploymentObj)
 			if err != nil {
 				t.Fatalf("Error creating %q deployment: %v", deschedulerDeploymentObj.Name, err)
 			}

@@ -104,16 +104,15 @@ func TestTooManyRestarts(t *testing.T) {
 	}
 	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace.Name, metav1.DeleteOptions{})
 
-	// Wait for OpenShift to set the namespace UID range (openshift.io/sa.scc.uid-range) so getRunAsForNamespace returns a valid runAsUser and pods pass SCC.
-	_ = wait.PollUntilContextTimeout(ctx, 2*time.Second, 45*time.Second, true, func(ctx context.Context) (bool, error) {
-		ns, err := clientSet.CoreV1().Namespaces().Get(ctx, testNamespace.Name, metav1.GetOptions{})
-		if err != nil {
-			return false, nil
-		}
-		return ns.Annotations["openshift.io/sa.scc.uid-range"] != "", nil
-	})
-
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	// getRunAsForNamespace handles OpenShift SCC annotation derivation internally:
+	// on OpenShift it reads openshift.io/sa.scc.uid-range (polling only for the
+	// transient empty-annotation window); on vanilla Kubernetes it returns (0,0)
+	// immediately. The explicit poll that was here previously duplicated that
+	// logic and added a full 45-second timeout on non-OpenShift clusters.
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	deploymentObj := buildTestDeployment("restart-pod", testNamespace.Name, deploymentReplicas, map[string]string{"test": "restart-pod", "name": "test-toomanyrestarts"}, func(deployment *appsv1.Deployment) {
 		deployment.Spec.Template.Spec.Containers[0].Command = []string{"/bin/sh"}
 		deployment.Spec.Template.Spec.Containers[0].Args = []string{"-c", "sleep 1s && exit 1"}
@@ -182,7 +181,10 @@ func TestTooManyRestarts(t *testing.T) {
 				}
 			}()
 
-			runAsU, runAsG := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+			}
 			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name, &runAsU, &runAsG)
 			t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
 			_, err = createDeschedulerDeployment(ctx, t, clientSet, deschedulerDeploymentObj)

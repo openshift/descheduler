@@ -80,6 +80,11 @@ func lowNodeUtilizationPolicy(lowNodeUtilizationArgs *nodeutilization.LowNodeUti
 	}
 }
 
+// defaultCPUStressorImage is the upstream default for --cpu-stressor-image.
+// It is a Docker Hub amd64-only image; on other architectures it will either
+// fail to pull or produce incorrect CPU metrics (wrong binary arch).
+const defaultCPUStressorImage = "narmidm/k8s-pod-cpu-stressor:latest"
+
 func TestLowNodeUtilizationKubernetesMetrics(t *testing.T) {
 	ctx := context.Background()
 
@@ -100,6 +105,23 @@ func TestLowNodeUtilizationKubernetesMetrics(t *testing.T) {
 
 	_, workerNodes := splitNodesAndWorkerNodes(nodeList.Items)
 
+	// Guard: the default CPU stressor image is amd64-only (Docker Hub single-arch
+	// manifest). Check the architecture of the cluster node that will actually run
+	// the workload (workerNodes[0]), not the test runner's architecture — they can
+	// differ in cross-arch CI setups. Skip with a clear message if a multi-arch
+	// image has not been provided.
+	if *cpuStressorImage == defaultCPUStressorImage && len(workerNodes) > 0 {
+		nodeArch := workerNodes[0].Status.NodeInfo.Architecture
+		if nodeArch != "amd64" && nodeArch != "" {
+			t.Skipf(
+				"TestLowNodeUtilizationKubernetesMetrics: default CPU stressor image %q is amd64-only; "+
+					"workerNodes[0] (%s) reports architecture %q. "+
+					"Supply a multi-arch image via --cpu-stressor-image to enable this test on non-amd64 nodes.",
+				defaultCPUStressorImage, workerNodes[0].Name, nodeArch,
+			)
+		}
+	}
+
 	testNamespace := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "e2e-" + strings.ToLower(t.Name())}}
 	t.Logf("Creating testing namespace %q", testNamespace.Name)
 	if _, err := clientSet.CoreV1().Namespaces().Create(ctx, testNamespace, metav1.CreateOptions{}); err != nil {
@@ -109,9 +131,12 @@ func TestLowNodeUtilizationKubernetesMetrics(t *testing.T) {
 
 	t.Log("Creating duplicates pods")
 	testLabel := map[string]string{"app": "test-lownodeutilization-kubernetes-metrics", "name": "test-lownodeutilization-kubernetes-metrics"}
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	deploymentObj := buildTestDeployment("lownodeutilization-kubernetes-metrics-pod", testNamespace.Name, 0, testLabel, nil, &runAsUser, &runAsGroup)
-	deploymentObj.Spec.Template.Spec.Containers[0].Image = "narmidm/k8s-pod-cpu-stressor:latest"
+	deploymentObj.Spec.Template.Spec.Containers[0].Image = *cpuStressorImage
 	deploymentObj.Spec.Template.Spec.Containers[0].Args = []string{"-cpu=1.0", "-duration=10s", "-forever"}
 	deploymentObj.Spec.Template.Spec.Containers[0].Resources = v1.ResourceRequirements{
 		Limits: v1.ResourceList{
@@ -269,8 +294,13 @@ func TestLowNodeUtilizationKubernetesMetrics(t *testing.T) {
 
 			preRunNames := sets.NewString(getCurrentPodNames(ctx, clientSet, testNamespace.Name, t)...)
 
-			// Deploy the descheduler with the configured policy
-			deschedulerPolicyConfigMapObj, err := deschedulerPolicyConfigMap(lowNodeUtilizationPolicy(tc.lowNodeUtilizationArgs, tc.evictorArgs, tc.metricsCollectorEnabled))
+			// Deploy the descheduler with the configured policy.
+			// Use deschedulerPolicyConfigMapFull so that DefaultEvictorArgs.LabelSelector
+			// is preserved in the serialised policy. deschedulerPolicyConfigMap would strip
+			// it via the legacy serialiser (legacyDefaultEvictorArgs has no LabelSelector
+			// field), silently removing the pod-label scoping that this test relies on as
+			// a second layer of defence against evicting non-test pods.
+			deschedulerPolicyConfigMapObj, err := deschedulerPolicyConfigMapFull(lowNodeUtilizationPolicy(tc.lowNodeUtilizationArgs, tc.evictorArgs, tc.metricsCollectorEnabled))
 			if err != nil {
 				t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
 			}
@@ -289,7 +319,10 @@ func TestLowNodeUtilizationKubernetesMetrics(t *testing.T) {
 				}
 			}()
 
-			runAsU, runAsG := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+			}
 			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name, &runAsU, &runAsG)
 			t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
 			_, err = createDeschedulerDeployment(ctx, t, clientSet, deschedulerDeploymentObj)

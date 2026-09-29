@@ -114,20 +114,22 @@ func waitForKubevirtReady(t *testing.T, ctx context.Context, kvClient generatedc
 	obj, err := kvClient.KubevirtV1().KubeVirts("kubevirt").Get(ctx, "kubevirt", metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) || strings.Contains(strings.ToLower(err.Error()), "could not find the requested resource") {
+			// KubeVirt is not installed on this cluster; skip rather than fail.
 			t.Skipf("KubeVirt CRD or resource not found on cluster (%v); skipping TestLiveMigrationInBackground", err)
 		}
 		t.Fatalf("Unable to get kubevirt/kubevirt: %v", err)
 	}
 	available := false
 	for _, condition := range obj.Status.Conditions {
-		if condition.Type == kvcorev1.KubeVirtConditionAvailable {
-			if condition.Status == corev1.ConditionTrue {
-				available = true
-			}
+		if condition.Type == kvcorev1.KubeVirtConditionAvailable && condition.Status == corev1.ConditionTrue {
+			available = true
 		}
 	}
 	if !available {
-		t.Skip("Kubevirt is not available on cluster; skipping TestLiveMigrationInBackground")
+		// KubeVirt is installed but its Available condition is false — this is a
+		// broken or degraded installation, not an absent one.  Skipping would hide
+		// the problem; fail so the issue is surfaced.
+		t.Fatalf("KubeVirt is installed (kubevirt/kubevirt exists) but its Available condition is not True — installation may be degraded. Fix the KubeVirt installation or skip via SKIP_KUBEVIRT_INSTALL before running this test.")
 	}
 	klog.Infof("Kubevirt is available")
 }
@@ -476,7 +478,10 @@ func TestLiveMigrationInBackground(t *testing.T) {
 		}
 	}()
 
-	runAsU, runAsG := getRunAsForNamespace(ctx, kubeClient, "kube-system")
+	runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, kubeClient, "kube-system")
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+	}
 	deschedulerDeploymentObj := deschedulerDeployment("kube-system", &runAsU, &runAsG)
 	// Set the descheduling interval to 10s
 	deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args = []string{"--policy-config-file", "/policy-dir/policy.yaml", "--descheduling-interval", "10s", "--v", "4", "--feature-gates", "EvictionsInBackground=true"}

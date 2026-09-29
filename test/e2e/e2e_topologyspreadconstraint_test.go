@@ -174,7 +174,10 @@ func TestTopologySpreadConstraint(t *testing.T) {
 			t.Logf("Creating Deployment %s with %d replicas", tc.name, tc.replicaCount)
 			deployLabels := tc.topologySpreadConstraint.LabelSelector.DeepCopy().MatchLabels
 			deployLabels["name"] = tc.name
-			runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+			runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+			}
 			deployment := buildTestDeployment(tc.name, testNamespace.Name, int32(tc.replicaCount), deployLabels, func(d *appsv1.Deployment) {
 				d.Spec.Template.Spec.TopologySpreadConstraints = []v1.TopologySpreadConstraint{tc.topologySpreadConstraint}
 			}, &runAsUser, &runAsGroup)
@@ -238,7 +241,10 @@ func TestTopologySpreadConstraint(t *testing.T) {
 					t.Fatalf("Unable to delete %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
 				}
 			}()
-			runAsU, runAsG := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+			}
 			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name, &runAsU, &runAsG)
 			t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
 			_, err = createDeschedulerDeployment(ctx, t, clientSet, deschedulerDeploymentObj)

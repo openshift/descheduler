@@ -74,6 +74,23 @@ var (
 	deschedulerImage = flag.String("descheduler-image", "", "descheduler image to set in the pod spec")
 	podRunAsUserId   = flag.Int64("pod-run-as-user-id", 0, ".spec.securityContext.runAsUser setting, not set if 0")
 	podRunAsGroupId  = flag.Int64("pod-run-as-group-id", 0, ".spec.securityContext.runAsGroup setting, not set if 0")
+	// pauseImage is the container image used for pause/test pods in e2e.
+	// Defaults to registry.k8s.io/pause (upstream/KIND default).
+	// Override via --pause-image when a different registry or architecture-specific
+	// image is required.
+	pauseImage = flag.String("pause-image", "registry.k8s.io/pause", "pause container image for test pods")
+	// cpuStressorImage is the container image used by TestLowNodeUtilizationKubernetesMetrics
+	// to generate CPU load. Defaults to narmidm/k8s-pod-cpu-stressor:latest (upstream default,
+	// Docker Hub amd64-only). Override via --cpu-stressor-image when a multi-arch or
+	// mirrored image is required.
+	cpuStressorImage = flag.String("cpu-stressor-image", "narmidm/k8s-pod-cpu-stressor:latest", "CPU stressor container image for LowNodeUtilization metrics test")
+	// legacyEvictor controls whether DefaultEvictorArgs are stripped to the legacy
+	// subset (omitting minReplicas and podProtections) before policy serialisation.
+	// Set to true when running against older shipped descheduler images that use strict
+	// YAML decoding and reject unknown fields.
+	// Defaults to false so that modern images run the full test suite including
+	// minReplicas subtests. Pass --legacy-evictor=true for older operand images.
+	legacyEvictor = flag.Bool("legacy-evictor", false, "strip minReplicas/podProtections from DefaultEvictorArgs for older descheduler images")
 )
 
 func TestMain(m *testing.M) {
@@ -107,35 +124,81 @@ func uniqueE2ENamespace(base string) string {
 	return base + "-" + string(uuid.NewUUID())[:8]
 }
 
-// getRunAsForNamespace returns runAsUser and runAsGroup for pods in the given namespace.
-// On OpenShift, reads the namespace's openshift.io/sa.scc.uid-range annotation (e.g. "1000920000/10000")
-// so pods comply with the SCC. Waits briefly for the annotation to appear (OpenShift may set it asynchronously).
-// Falls back to flag values when the annotation is missing or invalid.
-func getRunAsForNamespace(ctx context.Context, clientSet clientset.Interface, namespace string) (user, group int64) {
-	user, group = *podRunAsUserId, *podRunAsGroupId
-	var ns *v1.Namespace
-	_ = wait.PollUntilContextTimeout(ctx, 2*time.Second, 15*time.Second, true, func(ctx context.Context) (bool, error) {
-		var err error
-		ns, err = clientSet.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-		if err != nil {
-			return false, nil
-		}
-		return ns.Annotations["openshift.io/sa.scc.uid-range"] != "", nil
-	})
-	if ns == nil {
-		return user, group
+// getRunAsForNamespace returns runAsUser and runAsGroup for pods in the given namespace,
+// plus a non-nil error when the namespace GET fails (permissions error, API unavailable,
+// etc.).  Callers must check err before using the returned UIDs so that an API failure
+// is not silently treated as "vanilla Kubernetes, no SCC needed".
+//
+// Override path: if --pod-run-as-user-id or --pod-run-as-group-id are explicitly
+// provided as non-zero flags, those values are returned immediately (err == nil).
+// NOTE: run-e2e-tests.sh does NOT pass these flags so that OpenShift clusters
+// are never accidentally given a hardcoded UID that falls outside their SCC range.
+//
+// OpenShift path: fetches the namespace once.
+//   - GET error → return (0, 0, err) so the caller can fail with a clear message.
+//   - Annotation absent → vanilla Kubernetes/KIND, no SCC; return (0, 0, nil).
+//   - Annotation present and non-empty → parse and return immediately.
+//   - Annotation present but empty → transient OpenShift admission window;
+//     poll up to 15 s for it to be populated, then return (0, 0, nil) if it
+//     never appears (the cluster may not be OpenShift after all).
+func getRunAsForNamespace(ctx context.Context, clientSet clientset.Interface, namespace string) (user, group int64, err error) {
+	// Override path — explicit flag values take unconditional precedence.
+	if *podRunAsUserId != 0 || *podRunAsGroupId != 0 {
+		return *podRunAsUserId, *podRunAsGroupId, nil
 	}
-	ann := ns.Annotations["openshift.io/sa.scc.uid-range"]
+
+	// Single immediate fetch.
+	ns, fetchErr := clientSet.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	if fetchErr != nil {
+		// Distinguish a genuine API failure from the legitimate no-annotation case.
+		return 0, 0, fmt.Errorf("get namespace %q for SCC UID derivation: %w", namespace, fetchErr)
+	}
+
+	ann, annotationPresent := ns.Annotations["openshift.io/sa.scc.uid-range"]
+
+	// Annotation absent → vanilla Kubernetes / KIND; no SCC enforcement.
+	if !annotationPresent {
+		return 0, 0, nil
+	}
+
+	// Annotation present but empty → OpenShift admission is still writing it;
+	// poll briefly for it to be populated (typically < 1 s).
 	if ann == "" {
-		return user, group
+		_ = wait.PollUntilContextTimeout(ctx, 1*time.Second, 15*time.Second, false, func(ctx context.Context) (bool, error) {
+			ns, fetchErr = clientSet.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+			if fetchErr != nil {
+				return false, nil
+			}
+			ann = ns.Annotations["openshift.io/sa.scc.uid-range"]
+			return ann != "", nil
+		})
 	}
-	// Format is "1000920000/10000" (start/length)
+
+	// Annotation key was present but value never populated — this is an OpenShift
+	// cluster where admission did not write the UID range within the poll window.
+	// Returning (0, 0, nil) here would be indistinguishable from "no annotation /
+	// vanilla Kubernetes" and would silently run pods as UID 0, violating SCC.
+	if ann == "" {
+		return 0, 0, fmt.Errorf(
+			"namespace %q has openshift.io/sa.scc.uid-range annotation key but its value is still empty after 15s; "+
+				"OpenShift admission may not have completed — cannot derive a safe runAsUser",
+			namespace,
+		)
+	}
+
+	// Format is "1000920000/10000" (start/length).
 	before, _, _ := strings.Cut(ann, "/")
-	start, err := strconv.ParseInt(strings.TrimSpace(before), 10, 64)
-	if err != nil || start < 0 {
-		return user, group
+	start, parseErr := strconv.ParseInt(strings.TrimSpace(before), 10, 64)
+	if parseErr != nil || start < 0 {
+		// A malformed or negative annotation value is not the same as the annotation
+		// being absent.  Return an error so the caller can surface the bad data rather
+		// than silently falling back to UID 0.
+		return 0, 0, fmt.Errorf(
+			"namespace %q has malformed openshift.io/sa.scc.uid-range annotation %q (expected \"<start>/<length>\", start must be a non-negative integer): %v",
+			namespace, ann, parseErr,
+		)
 	}
-	return start, start
+	return start, start, nil
 }
 
 func initFeatureGates() featuregate.FeatureGate {
@@ -196,7 +259,26 @@ func stripPolicyToLegacyEvictor(policy *deschedulerapiv1alpha2.DeschedulerPolicy
 	}
 }
 
+// deschedulerPolicyConfigMap serialises the policy to a ConfigMap.
+// When --legacy-evictor=true, DefaultEvictorArgs are stripped to the legacy subset
+// (omitting minReplicas and podProtections) so that older descheduler images that use
+// strict YAML decoding do not reject the policy at startup.
+// When --legacy-evictor=false (the default), the policy is serialised as-is so that
+// modern images receive the full args including minReplicas.
+// Tests that always require full args (e.g. TestProtectPodsWithPVC for podProtections,
+// TestLowNodeUtilizationKubernetesMetrics for LabelSelector) use
+// deschedulerPolicyConfigMapFull directly.
 func deschedulerPolicyConfigMap(policy *deschedulerapiv1alpha2.DeschedulerPolicy) (*v1.ConfigMap, error) {
+	if *legacyEvictor {
+		stripPolicyToLegacyEvictor(policy)
+	}
+	return deschedulerPolicyConfigMapFull(policy)
+}
+
+// deschedulerPolicyConfigMapFull serialises the policy as-is, preserving all
+// DefaultEvictorArgs fields including podProtections. Use this when the test
+// requires modern evictor fields (e.g. TestProtectPodsWithPVC).
+func deschedulerPolicyConfigMapFull(policy *deschedulerapiv1alpha2.DeschedulerPolicy) (*v1.ConfigMap, error) {
 	cm := &v1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "descheduler-policy-configmap",
@@ -205,7 +287,6 @@ func deschedulerPolicyConfigMap(policy *deschedulerapiv1alpha2.DeschedulerPolicy
 	}
 	policy.APIVersion = "descheduler/v1alpha2"
 	policy.Kind = "DeschedulerPolicy"
-	stripPolicyToLegacyEvictor(policy)
 	policyBytes, err := yaml.Marshal(policy)
 	if err != nil {
 		return nil, err
@@ -317,10 +398,19 @@ func deschedulerDeployment(testName string, runAsUser, runAsGroup *int64) *appsv
 	return deploymentObject
 }
 
-// ensureDeschedulerRBAC creates or updates ClusterRole and ClusterRoleBinding for descheduler-sa in kube-system
-// so the descheduler pod can list/watch nodes, pods, namespaces, PVCs, priorityclasses, create evictions,
-// record events, read metrics.k8s.io, and manage leases for leader election. Uses create-or-update so stale/incomplete RBAC from previous runs is fixed.
-func ensureDeschedulerRBAC(ctx context.Context, clientSet clientset.Interface) {
+// ensureDeschedulerRBAC creates or reconciles the ClusterRole and ClusterRoleBinding
+// required by the in-test descheduler deployment.
+//
+// ClusterRole: always updated to the desired rule set on conflict.
+//
+// ClusterRoleBinding: RoleRef is an immutable field in Kubernetes — an Update that
+// changes it is rejected with a 422 Unprocessable Entity error.  The helper therefore
+// compares the existing RoleRef against the desired one before attempting any write:
+//   - If RoleRef already matches: update Subjects only (safe PUT).
+//   - If RoleRef differs: delete the stale binding and create a fresh one.
+//
+// Returns the first error encountered so createDeschedulerDeployment can fail the test.
+func ensureDeschedulerRBAC(ctx context.Context, clientSet clientset.Interface) error {
 	desiredRules := []rbacv1.PolicyRule{
 		{APIGroups: []string{"events.k8s.io"}, Resources: []string{"events"}, Verbs: []string{"create", "update"}},
 		{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"get", "list", "watch"}},
@@ -333,58 +423,89 @@ func ensureDeschedulerRBAC(ctx context.Context, clientSet clientset.Interface) {
 		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		{APIGroups: []string{"metrics.k8s.io"}, Resources: []string{"nodes", "pods"}, Verbs: []string{"get", "list"}},
 	}
+
+	// --- ClusterRole ---
 	cr := &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "descheduler-e2e-clusterrole"},
-		Rules:     desiredRules,
+		Rules:      desiredRules,
 	}
 	_, err := clientSet.RbacV1().ClusterRoles().Create(ctx, cr, metav1.CreateOptions{})
-	if err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			existing, getErr := clientSet.RbacV1().ClusterRoles().Get(ctx, "descheduler-e2e-clusterrole", metav1.GetOptions{})
-			if getErr == nil {
-				existing.Rules = desiredRules
-				_, err = clientSet.RbacV1().ClusterRoles().Update(ctx, existing, metav1.UpdateOptions{})
-			}
+	if apierrors.IsAlreadyExists(err) {
+		existing, getErr := clientSet.RbacV1().ClusterRoles().Get(ctx, "descheduler-e2e-clusterrole", metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("get ClusterRole descheduler-e2e-clusterrole: %w", getErr)
 		}
-		if err != nil {
-			klog.Warningf("Failed to create/update ClusterRole descheduler-e2e-clusterrole: %v", err)
+		existing.Rules = desiredRules
+		if _, err = clientSet.RbacV1().ClusterRoles().Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("update ClusterRole descheduler-e2e-clusterrole: %w", err)
 		}
+	} else if err != nil {
+		return fmt.Errorf("create ClusterRole descheduler-e2e-clusterrole: %w", err)
 	}
+
+	// --- ClusterRoleBinding ---
+	// RoleRef is immutable after creation. Strategy:
+	//   1. Try to create the binding.
+	//   2. On AlreadyExists: fetch the existing binding.
+	//   3. If RoleRef matches: update Subjects only (a plain PUT is safe).
+	//   4. If RoleRef differs: delete the stale binding and create a fresh one.
+	desiredRoleRef := rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "descheduler-e2e-clusterrole"}
 	desiredSubjects := []rbacv1.Subject{{Kind: "ServiceAccount", Name: "descheduler-sa", Namespace: "kube-system"}}
 	crb := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "descheduler-e2e-clusterrolebinding"},
-		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "descheduler-e2e-clusterrole"},
+		RoleRef:    desiredRoleRef,
 		Subjects:   desiredSubjects,
 	}
 	_, err = clientSet.RbacV1().ClusterRoleBindings().Create(ctx, crb, metav1.CreateOptions{})
-	if err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			existing, getErr := clientSet.RbacV1().ClusterRoleBindings().Get(ctx, "descheduler-e2e-clusterrolebinding", metav1.GetOptions{})
-			if getErr == nil {
-				existing.RoleRef = crb.RoleRef
-				existing.Subjects = desiredSubjects
-				_, err = clientSet.RbacV1().ClusterRoleBindings().Update(ctx, existing, metav1.UpdateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		existing, getErr := clientSet.RbacV1().ClusterRoleBindings().Get(ctx, "descheduler-e2e-clusterrolebinding", metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("get ClusterRoleBinding descheduler-e2e-clusterrolebinding: %w", getErr)
+		}
+		if existing.RoleRef == desiredRoleRef {
+			// RoleRef is already correct — safe to update Subjects in-place.
+			existing.Subjects = desiredSubjects
+			if _, err = clientSet.RbacV1().ClusterRoleBindings().Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+				return fmt.Errorf("update ClusterRoleBinding descheduler-e2e-clusterrolebinding subjects: %w", err)
+			}
+		} else {
+			// RoleRef differs — Kubernetes rejects updates to this field (422).
+			// Delete the stale binding and create a fresh one with the correct RoleRef.
+			klog.Warningf("ClusterRoleBinding descheduler-e2e-clusterrolebinding has RoleRef %+v; want %+v — deleting and recreating", existing.RoleRef, desiredRoleRef)
+			if err = clientSet.RbacV1().ClusterRoleBindings().Delete(ctx, "descheduler-e2e-clusterrolebinding", metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("delete stale ClusterRoleBinding descheduler-e2e-clusterrolebinding: %w", err)
+			}
+			if _, err = clientSet.RbacV1().ClusterRoleBindings().Create(ctx, crb, metav1.CreateOptions{}); err != nil {
+				return fmt.Errorf("recreate ClusterRoleBinding descheduler-e2e-clusterrolebinding: %w", err)
 			}
 		}
-		if err != nil {
-			klog.Warningf("Failed to create/update ClusterRoleBinding descheduler-e2e-clusterrolebinding: %v", err)
-		}
+	} else if err != nil {
+		return fmt.Errorf("create ClusterRoleBinding descheduler-e2e-clusterrolebinding: %w", err)
 	}
+	return nil
 }
 
-// ensureDeschedulerServiceAccount creates the descheduler-sa ServiceAccount in the given namespace if it does not exist.
-func ensureDeschedulerServiceAccount(ctx context.Context, clientSet clientset.Interface, namespace string) {
+// ensureDeschedulerServiceAccount creates the descheduler-sa ServiceAccount in the given
+// namespace if it does not already exist. Returns an error for any failure other than
+// AlreadyExists so that createDeschedulerDeployment can fail the test immediately rather
+// than proceeding to a deployment that will time out with a missing ServiceAccount.
+func ensureDeschedulerServiceAccount(ctx context.Context, clientSet clientset.Interface, namespace string) error {
 	sa := &v1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "descheduler-sa", Namespace: namespace}}
 	_, err := clientSet.CoreV1().ServiceAccounts(namespace).Create(ctx, sa, metav1.CreateOptions{})
 	if err != nil && !apierrors.IsAlreadyExists(err) {
-		klog.Warningf("Failed to create service account %s/%s: %v", namespace, "descheduler-sa", err)
+		return fmt.Errorf("create ServiceAccount descheduler-sa in %q: %w", namespace, err)
 	}
+	return nil
 }
 
 // createDeschedulerDeployment ensures RBAC and the descheduler-sa ServiceAccount exist, then creates the deployment.
 func createDeschedulerDeployment(ctx context.Context, t *testing.T, clientSet clientset.Interface, deployment *appsv1.Deployment) (*appsv1.Deployment, error) {
-	ensureDeschedulerRBAC(ctx, clientSet)
-	ensureDeschedulerServiceAccount(ctx, clientSet, deployment.Namespace)
+	if err := ensureDeschedulerRBAC(ctx, clientSet); err != nil {
+		t.Fatalf("ensureDeschedulerRBAC: %v", err)
+	}
+	if err := ensureDeschedulerServiceAccount(ctx, clientSet, deployment.Namespace); err != nil {
+		t.Fatalf("ensureDeschedulerServiceAccount: %v", err)
+	}
 	return clientSet.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
 }
 
@@ -526,7 +647,7 @@ func makePodSpec(priorityClassName string, gracePeriod *int64, runAsUser, runAsG
 		Containers: []v1.Container{{
 			Name:            "pause",
 			ImagePullPolicy: "IfNotPresent",
-			Image:           "registry.redhat.io/rhel8/pause",
+			Image:           *pauseImage,
 			Ports:           []v1.ContainerPort{{ContainerPort: 80}},
 			Resources: v1.ResourceRequirements{
 				Limits: v1.ResourceList{
@@ -744,7 +865,7 @@ func TestLowNodeUtilization(t *testing.T) {
 				Containers: []v1.Container{{
 					Name:            "pause",
 					ImagePullPolicy: "IfNotPresent",
-					Image:           "registry.redhat.io/rhel8/pause",
+					Image:           *pauseImage,
 					Ports:           []v1.ContainerPort{{ContainerPort: 80}},
 					Resources: v1.ResourceRequirements{
 						Limits: v1.ResourceList{
@@ -771,7 +892,10 @@ func TestLowNodeUtilization(t *testing.T) {
 				TerminationGracePeriodSeconds: utilptr.To[int64](1),
 			},
 		}
-		runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, pod.Namespace)
+		runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, pod.Namespace)
+		if uidErr != nil {
+			t.Fatalf("getRunAsForNamespace(%q): %v", pod.Namespace, uidErr)
+		}
 		if runAsUser != 0 {
 			pod.Spec.SecurityContext.RunAsUser = &runAsUser
 		}
@@ -793,7 +917,10 @@ func TestLowNodeUtilization(t *testing.T) {
 	}
 
 	t.Log("Creating RC with 4 replicas owning the created pods")
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	rc := RcByNameContainer("test-rc-node-utilization", testNamespace.Name, int32(4), map[string]string{"test": "node-utilization"}, nil, "", &runAsUser, &runAsGroup)
 	if _, err := clientSet.CoreV1().ReplicationControllers(rc.Namespace).Create(ctx, rc, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Error creating RC %v", err)
@@ -877,7 +1004,10 @@ func TestNamespaceConstraintsInclude(t *testing.T) {
 	}
 	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace.Name, metav1.DeleteOptions{})
 
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	rc := RcByNameContainer("test-rc-podlifetime", testNamespace.Name, 5, map[string]string{"test": "podlifetime-include"}, nil, "", &runAsUser, &runAsGroup)
 	if _, err := clientSet.CoreV1().ReplicationControllers(rc.Namespace).Create(ctx, rc, metav1.CreateOptions{}); err != nil {
 		t.Errorf("Error creating deployment %v", err)
@@ -948,7 +1078,10 @@ func TestNamespaceConstraintsExclude(t *testing.T) {
 	}
 	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace.Name, metav1.DeleteOptions{})
 
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	rc := RcByNameContainer("test-rc-podlifetime", testNamespace.Name, 5, map[string]string{"test": "podlifetime-exclude"}, nil, "", &runAsUser, &runAsGroup)
 	if _, err := clientSet.CoreV1().ReplicationControllers(rc.Namespace).Create(ctx, rc, metav1.CreateOptions{}); err != nil {
 		t.Errorf("Error creating deployment %v", err)
@@ -1034,7 +1167,10 @@ func testEvictSystemCritical(t *testing.T, isPriorityClass bool) {
 	}
 	defer clientSet.SchedulingV1().PriorityClasses().Delete(ctx, lowPriorityClass.Name, metav1.DeleteOptions{})
 
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	// Create a replication controller with the "system-node-critical" priority class (this gives the pods a priority of 2000001000)
 	rcCriticalPriority := RcByNameContainer("test-rc-podlifetime-criticalpriority", testNamespace.Name, 3,
 		map[string]string{"test": "podlifetime-criticalpriority"}, nil, "system-node-critical", &runAsUser, &runAsGroup)
@@ -1139,7 +1275,10 @@ func testEvictDaemonSetPod(t *testing.T, isDaemonSet bool) {
 	}
 	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace.Name, metav1.DeleteOptions{})
 
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	daemonSet := DsByNameContainer("test-ds-evictdaemonsetpods", testNamespace.Name,
 		map[string]string{"test": "evictdaemonsetpods"}, nil, &runAsUser, &runAsGroup)
 	if _, err := clientSet.AppsV1().DaemonSets(daemonSet.Namespace).Create(ctx, daemonSet, metav1.CreateOptions{}); err != nil {
@@ -1232,7 +1371,10 @@ func testPriority(t *testing.T, isPriorityClass bool) {
 	}
 	defer clientSet.SchedulingV1().PriorityClasses().Delete(ctx, lowPriorityClass.Name, metav1.DeleteOptions{})
 
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	// create two RCs with different priority classes in the same namespace
 	rcHighPriority := RcByNameContainer("test-rc-podlifetime-highpriority", testNamespace.Name, 5,
 		map[string]string{"test": "podlifetime-highpriority"}, nil, highPriorityClass.Name, &runAsUser, &runAsGroup)
@@ -1343,7 +1485,10 @@ func TestPodLabelSelector(t *testing.T) {
 	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace.Name, metav1.DeleteOptions{})
 
 	// create two replicationControllers with different labels
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	rcEvict := RcByNameContainer("test-rc-podlifetime-evict", testNamespace.Name, 5, map[string]string{"test": "podlifetime-evict"}, nil, "", &runAsUser, &runAsGroup)
 	if _, err := clientSet.CoreV1().ReplicationControllers(rcEvict.Namespace).Create(ctx, rcEvict, metav1.CreateOptions{}); err != nil {
 		t.Errorf("Error creating rc %v", err)
@@ -1446,7 +1591,10 @@ func TestEvictAnnotation(t *testing.T) {
 	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace.Name, metav1.DeleteOptions{})
 
 	t.Log("Create RC with pods with local storage which require descheduler.alpha.kubernetes.io/evict annotation to be set for eviction")
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	rc := RcByNameContainer("test-rc-evict-annotation", testNamespace.Name, int32(5), map[string]string{"test": "annotation"}, nil, "", &runAsUser, &runAsGroup)
 	rc.Spec.Template.Annotations = map[string]string{"descheduler.alpha.kubernetes.io/evict": "true"}
 	rc.Spec.Template.Spec.Volumes = []v1.Volume{
@@ -1518,7 +1666,10 @@ func TestPodLifeTimeOldestEvicted(t *testing.T) {
 	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace.Name, metav1.DeleteOptions{})
 
 	t.Log("Create RC with 1 pod for testing oldest pod getting evicted")
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	rc := RcByNameContainer("test-rc-pod-lifetime-oldest-evicted", testNamespace.Name, int32(1), map[string]string{"test": "oldest"}, nil, "", &runAsUser, &runAsGroup)
 	if _, err := clientSet.CoreV1().ReplicationControllers(rc.Namespace).Create(ctx, rc, metav1.CreateOptions{}); err != nil {
 		t.Errorf("Error creating deployment %v", err)
@@ -1859,7 +2010,7 @@ func createBalancedPodForNodes(
 				Containers: []v1.Container{
 					{
 						Name:  "pause",
-						Image: "registry.redhat.io/rhel8/pause",
+						Image: *pauseImage,
 						Resources: v1.ResourceRequirements{
 							Limits:   needCreateResource,
 							Requests: needCreateResource,

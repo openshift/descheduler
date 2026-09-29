@@ -103,8 +103,14 @@ func TestLeaderElection(t *testing.T) {
 	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace2.Name, metav1.DeleteOptions{})
 
 	testLabel := map[string]string{"test": "leaderelection", "name": "test-leaderelection"}
-	runAsU1, runAsG1 := getRunAsForNamespace(ctx, clientSet, ns1)
-	runAsU2, runAsG2 := getRunAsForNamespace(ctx, clientSet, ns2)
+	runAsU1, runAsG1, uidErr1 := getRunAsForNamespace(ctx, clientSet, ns1)
+	if uidErr1 != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", ns1, uidErr1)
+	}
+	runAsU2, runAsG2, uidErr2 := getRunAsForNamespace(ctx, clientSet, ns2)
+	if uidErr2 != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", ns2, uidErr2)
+	}
 	deployment1 := buildTestDeployment("leaderelection", ns1, 5, testLabel, nil, &runAsU1, &runAsG1)
 	err = createDeployment(t, ctx, clientSet, deployment1)
 	if err != nil {
@@ -236,7 +242,10 @@ func startDeschedulerServer(t *testing.T, ctx context.Context, clientSet clients
 		t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
 	}
 
-	runAsU, runAsG := getRunAsForNamespace(ctx, clientSet, "kube-system")
+	runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, clientSet, "kube-system")
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+	}
 	deschedulerDeploymentObj := deschedulerDeployment(testName, &runAsU, &runAsG)
 	deschedulerDeploymentObj.Name = fmt.Sprintf("%s-%s", deschedulerDeploymentObj.Name, testName)
 	args := deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args

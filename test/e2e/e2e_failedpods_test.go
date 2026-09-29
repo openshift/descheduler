@@ -119,7 +119,10 @@ func TestFailedPods(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+			runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+			}
 			job := initFailedJob(tc.name, testNamespace.Name, &runAsUser, &runAsGroup)
 			t.Logf("Creating job %s in %s namespace", job.Name, job.Namespace)
 			jobClient := clientSet.BatchV1().Jobs(testNamespace.Name)
@@ -165,7 +168,10 @@ func TestFailedPods(t *testing.T) {
 				}
 			}()
 
-			runAsU, runAsG := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+			}
 			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name, &runAsU, &runAsG)
 			t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
 			_, err = createDeschedulerDeployment(ctx, t, clientSet, deschedulerDeploymentObj)

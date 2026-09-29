@@ -103,7 +103,14 @@ func protectPodsWithPVCPolicy(namespace string, protectedsc []defaultevictor.Pro
 }
 
 // TestProtectPodsWithPVC tests that pods using PVCs are protected.
+// This test requires a modern descheduler image that understands the podProtections
+// field in DefaultEvictorArgs. Older images (targeted by --legacy-evictor=true) use
+// strict YAML decoding and reject unknown fields, so the descheduler pod would fail
+// to start. Skip in legacy mode rather than attempt to run with an incompatible image.
 func TestProtectPodsWithPVC(t *testing.T) {
+	if *legacyEvictor {
+		t.Skip("TestProtectPodsWithPVC requires podProtections support in DefaultEvictorArgs; skip with --legacy-evictor=true (older descheduler images)")
+	}
 	ctx := context.Background()
 	initPluginRegistry()
 
@@ -255,24 +262,10 @@ func TestProtectPodsWithPVC(t *testing.T) {
 				defer cli.CoreV1().PersistentVolumeClaims(namespace.Name).Delete(ctx, pvc.Name, metav1.DeleteOptions{})
 			}
 
-			for _, pvcWait := range tc.pvcs {
-				pvcName := pvcWait.Name
-				if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
-					vol, err := cli.CoreV1().PersistentVolumeClaims(namespace.Name).Get(ctx, pvcName, metav1.GetOptions{})
-					if err != nil {
-						return false, err
-					}
-					if vol.Status.Phase == v1.ClaimBound {
-						return true, nil
-					}
-					t.Logf("waiting for PVC %s/%s to bind, phase=%s", namespace.Name, pvcName, vol.Status.Phase)
-					return false, nil
-				}); err != nil {
-					t.Fatalf("PVC %s/%s did not reach Bound: %v", namespace.Name, pvcName, err)
-				}
+			runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, cli, namespace.Name)
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", namespace.Name, uidErr)
 			}
-
-			runAsUser, runAsGroup := getRunAsForNamespace(ctx, cli, namespace.Name)
 			deploy := buildTestDeployment(
 				"restart-pod",
 				namespace.Name,
@@ -292,6 +285,28 @@ func TestProtectPodsWithPVC(t *testing.T) {
 			}
 			defer cli.AppsV1().Deployments(deploy.Namespace).Delete(ctx, deploy.Name, metav1.DeleteOptions{})
 
+			// Wait for all PVCs to reach ClaimBound now that consumer pods have been
+			// scheduled. This is safe for both Immediate and WaitForFirstConsumer
+			// volume binding modes: under WaitForFirstConsumer the PV is only
+			// provisioned once a consumer pod is scheduled, so we must create the
+			// deployment first and check binding afterwards.
+			for _, pvcCheck := range tc.pvcs {
+				pvcName := pvcCheck.Name
+				if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+					vol, err := cli.CoreV1().PersistentVolumeClaims(namespace.Name).Get(ctx, pvcName, metav1.GetOptions{})
+					if err != nil {
+						return false, err
+					}
+					if vol.Status.Phase == v1.ClaimBound {
+						return true, nil
+					}
+					t.Logf("waiting for PVC %s/%s to bind, phase=%s", namespace.Name, pvcName, vol.Status.Phase)
+					return false, nil
+				}); err != nil {
+					t.Fatalf("PVC %s/%s did not reach Bound: %v", namespace.Name, pvcName, err)
+				}
+			}
+
 			// wait for 3 restarts
 			waitPodRestartCount(ctx, cli, namespace.Name, t, 3)
 
@@ -303,7 +318,11 @@ func TestProtectPodsWithPVC(t *testing.T) {
 			preRunNames := sets.NewString(getCurrentPodNames(ctx, cli, namespace.Name, t)...)
 
 			// deploy the descheduler with the configured policy
-			policycm, err := deschedulerPolicyConfigMap(tc.policy)
+			// Use deschedulerPolicyConfigMapFull so that podProtections.config is preserved
+			// in the serialised policy. The regular deschedulerPolicyConfigMap strips it for
+			// legacy-image compatibility, which would silently disable the protection logic
+			// this test is specifically exercising.
+			policycm, err := deschedulerPolicyConfigMapFull(tc.policy)
 			if err != nil {
 				t.Fatalf("Error creating %q CM: %v", policycm.Name, err)
 			}
@@ -324,7 +343,10 @@ func TestProtectPodsWithPVC(t *testing.T) {
 				}
 			}()
 
-			runAsU, runAsG := getRunAsForNamespace(ctx, cli, "kube-system")
+			runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, cli, "kube-system")
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+			}
 			desdep := deschedulerDeployment(namespace.Name, &runAsU, &runAsG)
 			t.Logf("creating descheduler deployment %v", desdep.Name)
 			if _, err := createDeschedulerDeployment(ctx, t, cli, desdep); err != nil {
@@ -353,36 +375,79 @@ func TestProtectPodsWithPVC(t *testing.T) {
 				deschedulerPodName = deschedulerPods[0].Name
 			}
 
-			if err := wait.PollUntilContextTimeout(
-				ctx, 5*time.Second, time.Minute, true,
-				func(ctx context.Context) (bool, error) {
-					podList, err := cli.CoreV1().Pods(namespace.Name).List(
-						ctx, metav1.ListOptions{},
-					)
+			// For tests that expect evictions (expectedEvictedPodCount > 0): poll until
+			// the expected number of pods have been removed — the count rising to the
+			// target is proof the descheduler acted.
+			//
+			// For tests that expect zero evictions (protected case): we MUST NOT return
+			// success on the very first poll tick — at that point the descheduler simply
+			// has not had time to run a cycle yet, so zero evictions proves nothing.
+			// Instead: first wait for the descheduler to log "Number of evictions/requests"
+			// which is emitted at V(1) at the end of every descheduling cycle (the
+			// descheduler is started with --v 4 so this line always appears).  Only after
+			// confirming at least one full cycle has completed do we assert the count.
+			if tc.expectedEvictedPodCount == 0 {
+				// Step 1: wait for at least one completed descheduler cycle.
+				// We MUST verify a cycle ran before asserting zero evictions; a
+				// stalled or failed descheduler also produces zero evictions and
+				// would give a false-positive.  The log line
+				// "Number of evictions/requests" is emitted at V(1) at the end of
+				// every descheduling cycle — the descheduler runs with --v 4 so it
+				// always appears.  Fail immediately if we cannot obtain a pod name
+				// or if the cycle marker does not appear within the timeout; both
+				// conditions indicate the descheduler did not run as expected.
+				t.Logf("protected case: waiting for descheduler to complete at least one cycle before asserting zero evictions")
+				if deschedulerPodName == "" {
+					t.Fatal("descheduler pod name unavailable after waitForPodsRunning — cannot verify a descheduling cycle ran; failing to avoid a false-positive zero-eviction result")
+				}
+				if err := wait.PollUntilContextTimeout(ctx, 3*time.Second, 2*time.Minute, false, func(ctx context.Context) (bool, error) {
+					req := cli.CoreV1().Pods("kube-system").GetLogs(deschedulerPodName, &v1.PodLogOptions{})
+					logBytes, err := req.DoRaw(ctx)
 					if err != nil {
-						t.Fatalf("error listing pods: %v", err)
+						return false, nil // pod may not be fully ready yet; retry
 					}
-
-					names := []string{}
-					for _, item := range podList.Items {
-						names = append(names, item.Name)
-					}
-
-					currentRunNames := sets.NewString(names...)
-					actualEvictedPod := preRunNames.Difference(currentRunNames)
-					actualEvictedPodCount := uint(actualEvictedPod.Len())
-					if actualEvictedPodCount < tc.expectedEvictedPodCount {
-						t.Logf(
-							"expecting %v number of pods evicted, got %v instead",
-							tc.expectedEvictedPodCount, actualEvictedPodCount,
-						)
-						return false, nil
-					}
-
-					return true, nil
-				},
-			); err != nil {
-				t.Fatalf("error waiting for descheduler running: %v", err)
+					return strings.Contains(string(logBytes), "Number of evictions/requests"), nil
+				}); err != nil {
+					t.Fatalf("descheduler cycle completion not confirmed via pod logs within 2 min (pod %q): %v — cannot assert zero evictions without proof the descheduler evaluated the pods", deschedulerPodName, err)
+				}
+				// Step 2: assert the count is still zero.
+				podList, err := cli.CoreV1().Pods(namespace.Name).List(ctx, metav1.ListOptions{})
+				if err != nil {
+					t.Fatalf("error listing pods after descheduler cycle: %v", err)
+				}
+				names := sets.NewString()
+				for _, item := range podList.Items {
+					names.Insert(item.Name)
+				}
+				actualEvictedPodCount := uint(preRunNames.Difference(names).Len())
+				if actualEvictedPodCount != 0 {
+					t.Fatalf("expected 0 evictions (pods with PVC on protected storage class should be preserved), got %d", actualEvictedPodCount)
+				}
+				t.Logf("confirmed: 0 pods evicted after a full descheduler cycle — protection is working")
+			} else {
+				// For non-zero expected evictions: poll until the target count is reached.
+				if err := wait.PollUntilContextTimeout(
+					ctx, 5*time.Second, time.Minute, true,
+					func(ctx context.Context) (bool, error) {
+						podList, err := cli.CoreV1().Pods(namespace.Name).List(ctx, metav1.ListOptions{})
+						if err != nil {
+							t.Fatalf("error listing pods: %v", err)
+						}
+						names := sets.NewString()
+						for _, item := range podList.Items {
+							names.Insert(item.Name)
+						}
+						actualEvictedPodCount := uint(preRunNames.Difference(names).Len())
+						if actualEvictedPodCount != tc.expectedEvictedPodCount {
+							t.Logf("expecting exactly %v pod(s) evicted, got %v instead",
+								tc.expectedEvictedPodCount, actualEvictedPodCount)
+							return false, nil
+						}
+						return true, nil
+					},
+				); err != nil {
+					t.Fatalf("error waiting for expected evictions: %v", err)
+				}
 			}
 
 			waitForTerminatingPodsToDisappear(ctx, t, cli, namespace.Name)

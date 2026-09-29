@@ -101,7 +101,10 @@ func TestRemoveDuplicates(t *testing.T) {
 
 	t.Log("Creating duplicates pods")
 	testLabel := map[string]string{"app": "test-duplicate", "name": "test-duplicatePods"}
-	runAsUser, runAsGroup := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	deploymentObj := buildTestDeployment("duplicate-pod", testNamespace.Name, 0, testLabel, nil, &runAsUser, &runAsGroup)
 
 	tests := []struct {
@@ -165,8 +168,12 @@ func TestRemoveDuplicates(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Legacy policy strips minReplicas; this subtest requires minReplicas=4 to expect 0 evictions.
-			if tc.name == "Ignores eviction with minReplicas of 4" {
+			// When --legacy-evictor=true, DefaultEvictorArgs are stripped and minReplicas
+			// is omitted from the policy. The "Ignores eviction with minReplicas of 4"
+			// subtest expects 0 evictions precisely because minReplicas=4 blocks them;
+			// without that field in the policy the descheduler evicts normally and the
+			// assertion fails. Skip only when running with --legacy-evictor=true.
+			if *legacyEvictor && tc.name == "Ignores eviction with minReplicas of 4" {
 				t.Skip("minReplicas is omitted in legacy policy for older descheduler images; skip this subtest")
 			}
 			t.Logf("Creating deployment %v in %v namespace", deploymentObj.Name, deploymentObj.Namespace)
@@ -213,7 +220,10 @@ func TestRemoveDuplicates(t *testing.T) {
 				}
 			}()
 
-			runAsU, runAsG := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+			}
 			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name, &runAsU, &runAsG)
 			t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
 			_, err = createDeschedulerDeployment(ctx, t, clientSet, deschedulerDeploymentObj)

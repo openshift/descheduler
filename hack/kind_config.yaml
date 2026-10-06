@@ -1,3 +1,5 @@
+# Used by e2e tests (test/run-e2e-tests.sh) and make kind-multi-node.
+# Worker nodes carry topology zone labels required by topology spread constraint e2e tests.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -5,14 +7,30 @@ nodes:
 - role: worker
   kubeadmConfigPatches:
     - |
+      apiVersion: kubeadm.k8s.io/v1beta3
       kind: JoinConfiguration
       nodeRegistration:
         kubeletExtraArgs:
           node-labels: "topology.kubernetes.io/zone=local-a"
+    - |
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: JoinConfiguration
+      nodeRegistration:
+        kubeletExtraArgs:
+          - name: "node-labels"
+            value: "topology.kubernetes.io/zone=local-a"
 - role: worker
   kubeadmConfigPatches:
     - |
+      apiVersion: kubeadm.k8s.io/v1beta3
       kind: JoinConfiguration
       nodeRegistration:
         kubeletExtraArgs:
           node-labels: "topology.kubernetes.io/zone=local-b"
+    - |
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: JoinConfiguration
+      nodeRegistration:
+        kubeletExtraArgs:
+          - name: "node-labels"
+            value: "topology.kubernetes.io/zone=local-b"

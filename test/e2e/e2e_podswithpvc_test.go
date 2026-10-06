@@ -290,21 +290,7 @@ func TestProtectPodsWithPVC(t *testing.T) {
 				t.Fatalf("Error creating %q CM: %v", policycm.Name, err)
 			}
 
-			t.Logf("creating %q policy CM with PodsWithPVC protection enabled...", policycm.Name)
-			if _, err = cli.CoreV1().ConfigMaps(policycm.Namespace).Create(
-				ctx, policycm, metav1.CreateOptions{},
-			); err != nil {
-				t.Fatalf("error creating %q CM: %v", policycm.Name, err)
-			}
-
-			defer func() {
-				t.Logf("deleting %q CM...", policycm.Name)
-				if err := cli.CoreV1().ConfigMaps(policycm.Namespace).Delete(
-					ctx, policycm.Name, metav1.DeleteOptions{},
-				); err != nil {
-					t.Fatalf("unable to delete %q CM: %v", policycm.Name, err)
-				}
-			}()
+			createConfigMapWithCleanup(t, ctx, cli, policycm)
 
 			desdep := deschedulerDeployment(namespace.Name)
 			t.Logf("creating descheduler deployment %v", desdep.Name)

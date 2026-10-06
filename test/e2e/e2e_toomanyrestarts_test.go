@@ -154,51 +154,10 @@ func TestTooManyRestarts(t *testing.T) {
 			rs.DefaultFeatureGates = initFeatureGates()
 
 			preRunNames := sets.NewString(getCurrentPodNames(ctx, clientSet, testNamespace.Name, t)...)
-			// Deploy the descheduler with the configured policy
-			deschedulerPolicyConfigMapObj, err := deschedulerPolicyConfigMap(tc.policy)
-			if err != nil {
-				t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
-			}
-			t.Logf("Creating %q policy CM with RemovePodsHavingTooManyRestarts configured...", deschedulerPolicyConfigMapObj.Name)
-			_, err = clientSet.CoreV1().ConfigMaps(deschedulerPolicyConfigMapObj.Namespace).Create(ctx, deschedulerPolicyConfigMapObj, metav1.CreateOptions{})
-			if err != nil {
-				t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
-			}
-
-			defer func() {
-				t.Logf("Deleting %q CM...", deschedulerPolicyConfigMapObj.Name)
-				err = clientSet.CoreV1().ConfigMaps(deschedulerPolicyConfigMapObj.Namespace).Delete(ctx, deschedulerPolicyConfigMapObj.Name, metav1.DeleteOptions{})
-				if err != nil {
-					t.Fatalf("Unable to delete %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
-				}
-			}()
+			createPolicyConfigMap(t, ctx, clientSet, tc.policy)
 
 			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name)
-			t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
-			_, err = clientSet.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Create(ctx, deschedulerDeploymentObj, metav1.CreateOptions{})
-			if err != nil {
-				t.Fatalf("Error creating %q deployment: %v", deschedulerDeploymentObj.Name, err)
-			}
-
-			deschedulerPodName := ""
-			defer func() {
-				if deschedulerPodName != "" {
-					printPodLogs(ctx, t, clientSet, deschedulerPodName)
-				}
-
-				t.Logf("Deleting %q deployment...", deschedulerDeploymentObj.Name)
-				err = clientSet.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Delete(ctx, deschedulerDeploymentObj.Name, metav1.DeleteOptions{})
-				if err != nil {
-					t.Fatalf("Unable to delete %q deployment: %v", deschedulerDeploymentObj.Name, err)
-				}
-				waitForPodsToDisappear(ctx, t, clientSet, deschedulerDeploymentObj.Labels, deschedulerDeploymentObj.Namespace)
-			}()
-
-			t.Logf("Waiting for the descheduler pod running")
-			deschedulerPods := waitForPodsRunning(ctx, t, clientSet, deschedulerDeploymentObj.Labels, 1, deschedulerDeploymentObj.Namespace)
-			if len(deschedulerPods) != 0 {
-				deschedulerPodName = deschedulerPods[0].Name
-			}
+			createDeschedulerDeploymentWithCleanup(t, ctx, clientSet, deschedulerDeploymentObj)
 			// Run RemovePodsHavingTooManyRestarts strategy
 			if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 50*time.Second, true, func(ctx context.Context) (bool, error) {
 				currentRunNames := sets.NewString(getCurrentPodNames(ctx, clientSet, testNamespace.Name, t)...)

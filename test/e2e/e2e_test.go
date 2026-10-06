@@ -31,6 +31,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -67,10 +68,15 @@ import (
 )
 
 var (
-	deschedulerImage = flag.String("descheduler-image", "", "descheduler image to set in the pod spec")
-	podRunAsUserId   = flag.Int64("pod-run-as-user-id", 0, ".spec.securityContext.runAsUser setting, not set if 0")
-	podRunAsGroupId  = flag.Int64("pod-run-as-group-id", 0, ".spec.securityContext.runAsGroup setting, not set if 0")
+	deschedulerImage   = flag.String("descheduler-image", "", "descheduler image to set in the pod spec")
+	kubevirtVersionTag = flag.String("kubevirt-version-tag", "", "KubeVirt release tag for container disk images in KubeVirt e2e tests (e.g. v1.9.0)")
+	podRunAsUserId     = flag.Int64("pod-run-as-user-id", 0, ".spec.securityContext.runAsUser setting, not set if 0")
+	podRunAsGroupId    = flag.Int64("pod-run-as-group-id", 0, ".spec.securityContext.runAsGroup setting, not set if 0")
 )
+
+func kubevirtCirrosContainerDiskImage() string {
+	return fmt.Sprintf("quay.io/kubevirt/cirros-container-disk-demo:%s", *kubevirtVersionTag)
+}
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -84,7 +90,12 @@ func TestMain(m *testing.M) {
 }
 
 func isClientRateLimiterError(err error) bool {
-	return strings.Contains(err.Error(), "client rate limiter")
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "client rate limiter") &&
+		!strings.Contains(err.Error(), "context deadline exceeded") &&
+		!strings.Contains(err.Error(), "context canceled")
 }
 
 func initFeatureGates() featuregate.FeatureGate {
@@ -110,6 +121,78 @@ func deschedulerPolicyConfigMap(policy *deschedulerapiv1alpha2.DeschedulerPolicy
 	}
 	cm.Data = map[string]string{"policy.yaml": string(policyBytes)}
 	return cm, nil
+}
+
+// createPolicyConfigMap generates, creates (or recreates if already existing), and registers cleanup for a descheduler policy ConfigMap.
+func createPolicyConfigMap(t *testing.T, ctx context.Context, kubeClient clientset.Interface, policy *deschedulerapiv1alpha2.DeschedulerPolicy) *v1.ConfigMap {
+	t.Helper()
+	cm, err := deschedulerPolicyConfigMap(policy)
+	if err != nil {
+		t.Fatalf("Error creating policy CM object: %v", err)
+	}
+	return createConfigMapWithCleanup(t, ctx, kubeClient, cm)
+}
+
+// createConfigMapWithCleanup creates (or recreates if already existing) a ConfigMap and registers a t.Cleanup callback to delete it.
+func createConfigMapWithCleanup(t *testing.T, ctx context.Context, kubeClient clientset.Interface, cm *v1.ConfigMap) *v1.ConfigMap {
+	t.Helper()
+	t.Logf("Creating %q policy CM...", cm.Name)
+	_, err := kubeClient.CoreV1().ConfigMaps(cm.Namespace).Create(ctx, cm, metav1.CreateOptions{})
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			_ = kubeClient.CoreV1().ConfigMaps(cm.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{})
+			_, err = kubeClient.CoreV1().ConfigMaps(cm.Namespace).Create(ctx, cm, metav1.CreateOptions{})
+		}
+		if err != nil {
+			t.Fatalf("Error creating %q CM: %v", cm.Name, err)
+		}
+	}
+
+	t.Cleanup(func() {
+		t.Logf("Deleting %q CM...", cm.Name)
+		if err := kubeClient.CoreV1().ConfigMaps(cm.Namespace).Delete(context.Background(), cm.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			t.Logf("Unable to delete %q CM: %v", cm.Name, err)
+		}
+	})
+
+	return cm
+}
+
+// createDeschedulerDeploymentWithCleanup creates (or recreates if already existing) a descheduler deployment and registers a t.Cleanup callback.
+func createDeschedulerDeploymentWithCleanup(t *testing.T, ctx context.Context, kubeClient clientset.Interface, deployment *appsv1.Deployment) string {
+	t.Helper()
+	t.Logf("Creating descheduler deployment %v", deployment.Name)
+	_, err := kubeClient.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			_ = kubeClient.AppsV1().Deployments(deployment.Namespace).Delete(ctx, deployment.Name, metav1.DeleteOptions{})
+			_, err = kubeClient.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
+		}
+		if err != nil {
+			t.Fatalf("Error creating %q deployment: %v", deployment.Name, err)
+		}
+	}
+
+	deschedulerPodName := ""
+	t.Cleanup(func() {
+		if deschedulerPodName != "" {
+			printPodLogs(context.Background(), t, kubeClient, deschedulerPodName)
+		}
+
+		t.Logf("Deleting %q deployment...", deployment.Name)
+		if err := kubeClient.AppsV1().Deployments(deployment.Namespace).Delete(context.Background(), deployment.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			t.Logf("Unable to delete %q deployment: %v", deployment.Name, err)
+		}
+
+		waitForPodsToDisappear(context.Background(), t, kubeClient, deployment.Labels, deployment.Namespace)
+	})
+
+	t.Logf("Waiting for the descheduler pod running")
+	deschedulerPods := waitForPodsRunning(ctx, t, kubeClient, deployment.Labels, 1, deployment.Namespace)
+	if len(deschedulerPods) != 0 {
+		deschedulerPodName = deschedulerPods[0].Name
+	}
+	return deschedulerPodName
 }
 
 func deschedulerDeployment(testName string) *appsv1.Deployment {

@@ -68,6 +68,8 @@ deschedulingInterval: 5m
 # only if that node is in the same zone as at least one already-running descheduler
 replicas: 1
 
+revisionHistoryLimit: 10
+
 # Specifies whether Leader Election resources should be created
 # Required when running as a Deployment
 # NOTE: Leader election can't be activated if DryRun enabled
@@ -79,6 +81,20 @@ leaderElection: {}
 #  resourceLock: "leases"
 #  resourceName: "descheduler"
 #  resourceNamespace: "kube-system"
+
+# Pod Disruption Budget for the descheduler Deployment. Optional.
+# Only rendered when kind is "Deployment". The descheduler runs a single replica
+# by default, so this is disabled by default. Enable it for highly available
+# setups (replicas > 1 with leaderElection enabled) to keep a descheduler pod
+# available during voluntary node disruptions.
+podDisruptionBudget:
+  enabled: false
+  # minAvailable and maxUnavailable are mutually exclusive; set only one.
+  minAvailable: 1
+  maxUnavailable: ""
+  # See https://kubernetes.io/docs/tasks/run-application/configure-pdb/
+  # unhealthyPodEvictionPolicy: IfHealthyBudget
+  annotations: {}
 
 command:
 - "/bin/descheduler"
@@ -149,6 +165,19 @@ deschedulerPolicy:
             - RemovePodsViolatingInterPodAntiAffinity
 
 priorityClassName: system-cluster-critical
+
+# schedulerName is the name of the scheduler used to schedule the descheduler pods.
+# Leave empty to use the cluster default scheduler.
+schedulerName: ""
+
+# runtimeClassName is the RuntimeClass applied to the descheduler pods.
+# Leave empty to use the cluster default runtime.
+runtimeClassName: ""
+
+# Set the Pod spec `hostUsers` field to control user-namespace sharing.
+# Default is not set (the cluster default applies). Set to `false` to opt into
+# user-namespace isolation, or `true` to share the host user namespace.
+# hostUsers: false
 
 nodeSelector: {}
 #  foo: bar

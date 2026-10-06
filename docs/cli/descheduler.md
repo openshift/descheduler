@@ -26,7 +26,10 @@ descheduler [flags]
       --feature-gates mapStringBool              A set of key=value pairs that describe feature gates for alpha/experimental features. Options are:
                                                  AllAlpha=true|false (ALPHA - default=false)
                                                  AllBeta=true|false (BETA - default=false)
+                                                 ContextualLogging=true|false (BETA - default=true)
                                                  EvictionsInBackground=true|false (ALPHA - default=false)
+                                                 LoggingAlphaOptions=true|false (ALPHA - default=false)
+                                                 LoggingBetaOptions=true|false (BETA - default=true)
   -h, --help                                     help for descheduler
       --http2-max-streams-per-connection int     The limit that the server gives to clients for the maximum number of streams in an HTTP/2 connection. Zero means to use golang's default.
       --kubeconfig string                        File with kube configuration. Deprecated, use client-connection-kubeconfig instead.

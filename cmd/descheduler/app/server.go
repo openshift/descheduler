@@ -28,13 +28,13 @@ import (
 
 	"sigs.k8s.io/descheduler/cmd/descheduler/app/options"
 	"sigs.k8s.io/descheduler/pkg/descheduler"
+	"sigs.k8s.io/descheduler/pkg/features"
 	"sigs.k8s.io/descheduler/pkg/tracing"
 
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/server/healthz"
 	"k8s.io/apiserver/pkg/server/mux"
-	"k8s.io/component-base/featuregate"
 	"k8s.io/component-base/logs"
 	logsapi "k8s.io/component-base/logs/api/v1"
 	_ "k8s.io/component-base/logs/json/register"
@@ -49,7 +49,6 @@ func NewDeschedulerCommand(out io.Writer) *cobra.Command {
 		klog.ErrorS(err, "unable to initialize server")
 	}
 
-	featureGate := featuregate.NewFeatureGate()
 	logConfig := logsapi.NewLoggingConfiguration()
 
 	cmd := &cobra.Command{
@@ -58,7 +57,10 @@ func NewDeschedulerCommand(out io.Writer) *cobra.Command {
 		Long:  "The descheduler evicts pods which may be bound to less desired nodes",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			logs.InitLogs()
-			if logsapi.ValidateAndApply(logConfig, featureGate); err != nil {
+			if err := features.DefaultMutableFeatureGate.SetFromMap(s.FeatureGates); err != nil {
+				return err
+			}
+			if err := logsapi.ValidateAndApply(logConfig, features.DefaultMutableFeatureGate); err != nil {
 				return err
 			}
 			descheduler.SetupPlugins()
@@ -80,9 +82,9 @@ func NewDeschedulerCommand(out io.Writer) *cobra.Command {
 	}
 	cmd.SetOut(out)
 	flags := cmd.Flags()
+	runtime.Must(logsapi.AddFeatureGates(features.DefaultMutableFeatureGate))
 	s.AddFlags(flags)
 
-	runtime.Must(logsapi.AddFeatureGates(featureGate))
 	logsapi.AddFlags(logConfig, flags)
 
 	return cmd

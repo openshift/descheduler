@@ -235,8 +235,10 @@ func initDescheduler(t *testing.T, ctx context.Context, featureGates featuregate
 	if dryRun {
 		if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 			for _, obj := range objects {
-				// Only check for nodes - secrets are handled by namespacedSharedInformerFactory
-				if _, ok := obj.(*v1.Node); !ok {
+				// Only check for nodes and pods - secrets are handled by namespacedSharedInformerFactory
+				switch obj.(type) {
+				case *v1.Node, *v1.Pod:
+				default:
 					continue
 				}
 				exists, err := descheduler.kubeClientSandbox.hasRuntimeObjectInIndexer(obj)
@@ -256,7 +258,7 @@ func initDescheduler(t *testing.T, ctx context.Context, featureGates featuregate
 			}
 			return true, nil
 		}); err != nil {
-			t.Fatalf("nodes did not propagate to the indexer: %v", err)
+			t.Fatalf("objects did not propagate to the indexer: %v", err)
 		}
 	}
 
@@ -2003,7 +2005,7 @@ func TestPluginInformerRegistration(t *testing.T) {
 					continue
 				}
 
-				if informer.Informer() != informer2.Informer() {
+				if informer.Informer().GetIndexer() != informer2.Informer().GetIndexer() {
 					t.Errorf("Expected %s informer to be cached in factory", gvr.Resource)
 				}
 				t.Logf("Found %v informer after initializing the descheduler", gvr)

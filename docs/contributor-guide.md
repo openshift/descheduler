@@ -29,6 +29,25 @@ View all CLI options.
 ```
 
 ## Run Tests
+
+### All-in-one e2e (kind cluster created by the test script)
+
+```
+KIND_E2E=1 make test-e2e
+```
+
+Optional skip flags (set to any non-empty value to skip that step):
+
+| Variable | Skips |
+|----------|-------|
+| `SKIP_INSTALL` | kind node-image build and cluster create |
+| `SKIP_KUBECTL_INSTALL` | kubectl download |
+| `SKIP_KIND_INSTALL` | kind binary download |
+| `SKIP_KUBEVIRT_INSTALL` | KubeVirt operator install |
+| `SKIP_METRICS_SERVER_INSTALL` | metrics-server install |
+
+### Manual kind cluster (iterative development)
+
 ```
 GOOS=linux make dev-image
 make kind-multi-node

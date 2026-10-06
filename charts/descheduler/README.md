@@ -62,9 +62,17 @@ The following table lists the configurable parameters of the _descheduler_ chart
 | `ttlSecondsAfterFinished`           | If set, configure `ttlSecondsAfterFinished` for the _descheduler_ job                                                 | `nil`                                     |
 | `deschedulingInterval`              | If using kind:Deployment, sets time between consecutive descheduler executions.                                       | `5m`                                      |
 | `replicas`                          | The replica count for Deployment                                                                                      | `1`                                       |
+| `revisionHistoryLimit               | The revision history limit for Deployment                                                                             | `10`                                      |
 | `leaderElection`                    | The options for high availability when running replicated components                                                  | _see values.yaml_                         |
+| `podDisruptionBudget.enabled`       | If `true` and `kind` is `Deployment`, create a PodDisruptionBudget for the descheduler                                | `false`                                   |
+| `podDisruptionBudget.minAvailable`  | Minimum descheduler pods that must stay available (mutually exclusive with `maxUnavailable`)                          | `1`                                       |
+| `podDisruptionBudget.maxUnavailable`| Maximum descheduler pods that can be unavailable (mutually exclusive with `minAvailable`)                             | `""`                                      |
+| `podDisruptionBudget.annotations`   | Annotations to add to the PodDisruptionBudget                                                                         | `{}`                                      |
 | `cmdOptions`                        | The options to pass to the _descheduler_ command                                                                      | _see values.yaml_                         |
 | `priorityClassName`                 | The name of the priority class to add to pods                                                                         | `system-cluster-critical`                 |
+| `schedulerName`                     | The name of the scheduler used to schedule the descheduler cronjob/deployment pods                                    | `""`                                      |
+| `runtimeClassName`                  | The RuntimeClass applied to the descheduler cronjob/deployment pods                                                   | `""`                                      |
+| `hostUsers`                         | If set (`true`/`false`), sets `hostUsers` on the pod spec to control user-namespace sharing                           | `nil`                                     |
 | `rbac.create`                       | If `true`, create & use RBAC resources                                                                                | `true`                                    |
 | `resources`                         | Descheduler container CPU and memory requests/limits                                                                  | _see values.yaml_                         |
 | `serviceAccount.create`             | If `true`, create a service account for the cron job                                                                  | `true`                                    |

@@ -135,9 +135,9 @@ func TestLeaderElection(t *testing.T) {
 	t.Logf("Removed kube-system/descheduler lease")
 
 	t.Log("Starting deschedulers")
-	pod1Name, deploy1, cm1 := startDeschedulerServer(t, ctx, clientSet, ns1)
+	pod1Name, deploy1, _ := startDeschedulerServer(t, ctx, clientSet, ns1)
 	time.Sleep(1 * time.Second)
-	pod2Name, deploy2, cm2 := startDeschedulerServer(t, ctx, clientSet, ns2)
+	pod2Name, deploy2, _ := startDeschedulerServer(t, ctx, clientSet, ns2)
 	defer func() {
 		for _, podName := range []string{pod1Name, pod2Name} {
 			printPodLogs(ctx, t, clientSet, podName)
@@ -151,14 +151,6 @@ func TestLeaderElection(t *testing.T) {
 			}
 
 			waitForPodsToDisappear(ctx, t, clientSet, deploy.Labels, deploy.Namespace)
-		}
-
-		for _, cm := range []*v1.ConfigMap{cm1, cm2} {
-			t.Logf("Deleting %q CM...", cm.Name)
-			err = clientSet.CoreV1().ConfigMaps(cm.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{})
-			if err != nil {
-				t.Fatalf("Unable to delete %q CM: %v", cm.Name, err)
-			}
 		}
 
 		clientSet.CoordinationV1().Leases("kube-system").Delete(ctx, "descheduler", metav1.DeleteOptions{})
@@ -223,21 +215,21 @@ func startDeschedulerServer(t *testing.T, ctx context.Context, clientSet clients
 		EvictFailedBarePods:     false,
 	}
 	deschedulerPolicyConfigMapObj, err := deschedulerPolicyConfigMap(podlifetimePolicy(podLifeTimeArgs, evictorArgs))
+	if err != nil {
+		t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
+	}
 	deschedulerPolicyConfigMapObj.Name = fmt.Sprintf("%s-%s", deschedulerPolicyConfigMapObj.Name, testName)
-	if err != nil {
-		t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
-	}
-
-	t.Logf("Creating %q policy CM with RemoveDuplicates configured...", deschedulerPolicyConfigMapObj.Name)
-	_, err = clientSet.CoreV1().ConfigMaps(deschedulerPolicyConfigMapObj.Namespace).Create(ctx, deschedulerPolicyConfigMapObj, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
-	}
+	createConfigMapWithCleanup(t, ctx, clientSet, deschedulerPolicyConfigMapObj)
 
 	deschedulerDeploymentObj := deschedulerDeployment(testName)
 	deschedulerDeploymentObj.Name = fmt.Sprintf("%s-%s", deschedulerDeploymentObj.Name, testName)
-	args := deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args
-	deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args = append(args, "--leader-elect", "--leader-elect-retry-period", "1s")
+	deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args = []string{
+		"--policy-config-file", "/policy-dir/policy.yaml",
+		"--descheduling-interval", "3s",
+		"--v", "4",
+		"--leader-elect",
+		"--leader-elect-retry-period", "1s",
+	}
 	deschedulerDeploymentObj.Spec.Template.Spec.Volumes = []v1.Volume{
 		{
 			Name: "policy-volume",

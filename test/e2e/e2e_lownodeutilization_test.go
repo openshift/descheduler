@@ -105,7 +105,10 @@ func TestLowNodeUtilizationKubernetesMetrics(t *testing.T) {
 	if _, err := clientSet.CoreV1().Namespaces().Create(ctx, testNamespace, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Unable to create ns %v: %v", testNamespace.Name, err)
 	}
-	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace.Name, metav1.DeleteOptions{})
+
+	t.Cleanup(func() {
+		clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace.Name, metav1.DeleteOptions{})
+	})
 
 	t.Log("Creating duplicates pods")
 	testLabel := map[string]string{"app": "test-lownodeutilization-kubernetes-metrics", "name": "test-lownodeutilization-kubernetes-metrics"}
@@ -164,11 +167,11 @@ func TestLowNodeUtilizationKubernetesMetrics(t *testing.T) {
 			expectedEvictedPodCount: 2,
 			lowNodeUtilizationArgs: &nodeutilization.LowNodeUtilizationArgs{
 				Thresholds: api.ResourceThresholds{
-					v1.ResourceCPU:  30,
+					v1.ResourceCPU:  8,
 					v1.ResourcePods: 30,
 				},
 				TargetThresholds: api.ResourceThresholds{
-					v1.ResourceCPU:  50,
+					v1.ResourceCPU:  15,
 					v1.ResourcePods: 50,
 				},
 				MetricsUtilization: &nodeutilization.MetricsUtilization{
@@ -194,21 +197,22 @@ func TestLowNodeUtilizationKubernetesMetrics(t *testing.T) {
 				}
 				return
 			}
-			defer func() {
+
+			t.Cleanup(func() {
 				clientSet.AppsV1().Deployments(deploymentObj.Namespace).Delete(ctx, deploymentObj.Name, metav1.DeleteOptions{})
 				waitForPodsToDisappear(ctx, t, clientSet, deploymentObj.Labels, deploymentObj.Namespace)
-			}()
+			})
 			waitForPodsRunning(ctx, t, clientSet, deploymentObj.Labels, tc.replicasNum, deploymentObj.Namespace)
 			// wait until workerNodes[0].Name has the right actual cpu utilization and all the testing pods are running
-			// and producing ~12 cores in total
-			wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(context.Context) (done bool, err error) {
+			// and producing ~4 cores in total
+			if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 60*time.Second, true, func(ctx context.Context) (done bool, err error) {
 				item, err := metricsClient.MetricsV1beta1().NodeMetricses().Get(ctx, workerNodes[0].Name, metav1.GetOptions{})
 				if err != nil {
 					t.Logf("unable to list nodemetricses: %v", err)
 					return false, nil
 				}
-				t.Logf("Waiting for %q nodemetrics cpu utilization to get over 12, currently %v", workerNodes[0].Name, item.Usage.Cpu().Value())
-				if item.Usage.Cpu().Value() < 12 {
+				t.Logf("Waiting for %q nodemetrics cpu utilization to get over 3, currently %v", workerNodes[0].Name, item.Usage.Cpu().Value())
+				if item.Usage.Cpu().Value() < 3 {
 					return false, nil
 				}
 				totalCpu := resource.NewMilliQuantity(0, resource.DecimalSI)
@@ -225,60 +229,20 @@ func TestLowNodeUtilizationKubernetesMetrics(t *testing.T) {
 						totalCpu.Add(container.Usage[v1.ResourceCPU])
 					}
 				}
-				// Value() will round up (e.g. 11.1 -> 12), which is still ok
-				t.Logf("Waiting for totalCpu to get to 12 at least, got %v\n", totalCpu.Value())
-				return totalCpu.Value() >= 12, nil
-			})
+				// Value() will round up (e.g. 3.1 -> 4), which is still ok
+				t.Logf("Waiting for totalCpu to get to 3 at least, got %v\n", totalCpu.Value())
+				return totalCpu.Value() >= 3, nil
+			}); err != nil {
+				t.Fatalf("Error waiting for node/pod metrics: %v", err)
+			}
 
 			preRunNames := sets.NewString(getCurrentPodNames(ctx, clientSet, testNamespace.Name, t)...)
 
 			// Deploy the descheduler with the configured policy
-			deschedulerPolicyConfigMapObj, err := deschedulerPolicyConfigMap(lowNodeUtilizationPolicy(tc.lowNodeUtilizationArgs, tc.evictorArgs, tc.metricsCollectorEnabled))
-			if err != nil {
-				t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
-			}
-
-			t.Logf("Creating %q policy CM with LowNodeUtilization configured...", deschedulerPolicyConfigMapObj.Name)
-			_, err = clientSet.CoreV1().ConfigMaps(deschedulerPolicyConfigMapObj.Namespace).Create(ctx, deschedulerPolicyConfigMapObj, metav1.CreateOptions{})
-			if err != nil {
-				t.Fatalf("Error creating %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
-			}
-
-			defer func() {
-				t.Logf("Deleting %q CM...", deschedulerPolicyConfigMapObj.Name)
-				err = clientSet.CoreV1().ConfigMaps(deschedulerPolicyConfigMapObj.Namespace).Delete(ctx, deschedulerPolicyConfigMapObj.Name, metav1.DeleteOptions{})
-				if err != nil {
-					t.Fatalf("Unable to delete %q CM: %v", deschedulerPolicyConfigMapObj.Name, err)
-				}
-			}()
+			createPolicyConfigMap(t, ctx, clientSet, lowNodeUtilizationPolicy(tc.lowNodeUtilizationArgs, tc.evictorArgs, tc.metricsCollectorEnabled))
 
 			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name)
-			t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
-			_, err = clientSet.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Create(ctx, deschedulerDeploymentObj, metav1.CreateOptions{})
-			if err != nil {
-				t.Fatalf("Error creating %q deployment: %v", deschedulerDeploymentObj.Name, err)
-			}
-
-			deschedulerPodName := ""
-			defer func() {
-				if deschedulerPodName != "" {
-					printPodLogs(ctx, t, clientSet, deschedulerPodName)
-				}
-
-				t.Logf("Deleting %q deployment...", deschedulerDeploymentObj.Name)
-				err = clientSet.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Delete(ctx, deschedulerDeploymentObj.Name, metav1.DeleteOptions{})
-				if err != nil {
-					t.Fatalf("Unable to delete %q deployment: %v", deschedulerDeploymentObj.Name, err)
-				}
-
-				waitForPodsToDisappear(ctx, t, clientSet, deschedulerDeploymentObj.Labels, deschedulerDeploymentObj.Namespace)
-			}()
-
-			t.Logf("Waiting for the descheduler pod running")
-			deschedulerPods := waitForPodsRunning(ctx, t, clientSet, deschedulerDeploymentObj.Labels, 1, deschedulerDeploymentObj.Namespace)
-			if len(deschedulerPods) != 0 {
-				deschedulerPodName = deschedulerPods[0].Name
-			}
+			createDeschedulerDeploymentWithCleanup(t, ctx, clientSet, deschedulerDeploymentObj)
 
 			// Run LowNodeUtilization plugin
 			var meetsExpectations bool

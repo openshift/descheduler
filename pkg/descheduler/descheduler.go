@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	stdruntime "runtime"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -402,7 +404,36 @@ func (d *descheduler) runDeschedulerLoop(ctx context.Context, nodes []*v1.Node) 
 
 	klog.V(1).InfoS("Number of evictions/requests", "totalEvicted", d.podEvictor.TotalEvicted(), "evictionRequests", d.podEvictor.TotalEvictionRequests())
 
+	// The operand has a memory request and no limit, so a cgroup cap is not
+	// available (OCPBUGS-1995). Go retains the cycle high-water heap. During
+	// migration that watermark rises across runs until the process occupies
+	// the node. Return idle pages here. Informer caches stay resident, and
+	// this does not OOM-kill the container.
+	releaseIdleHeap()
+
 	return nil
+}
+
+// releaseIdleHeap forces a garbage collection and returns unused heap to the
+// operating system. Live descheduler data is left in place.
+func releaseIdleHeap() {
+	logStats := klog.V(2).Enabled()
+	var before stdruntime.MemStats
+	if logStats {
+		stdruntime.ReadMemStats(&before)
+	}
+	debug.FreeOSMemory()
+	if !logStats {
+		return
+	}
+	var after stdruntime.MemStats
+	stdruntime.ReadMemStats(&after)
+	klog.V(2).InfoS("Released idle descheduler heap",
+		"heapAllocBefore", before.HeapAlloc,
+		"heapAllocAfter", after.HeapAlloc,
+		"heapReleasedBefore", before.HeapReleased,
+		"heapReleasedAfter", after.HeapReleased,
+	)
 }
 
 // runProfiles runs all the deschedule plugins of all profiles and

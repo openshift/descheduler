@@ -113,18 +113,23 @@ ethernets:
 func waitForKubevirtReady(t *testing.T, ctx context.Context, kvClient generatedclient.Interface) {
 	obj, err := kvClient.KubevirtV1().KubeVirts("kubevirt").Get(ctx, "kubevirt", metav1.GetOptions{})
 	if err != nil {
+		if apierrors.IsNotFound(err) || strings.Contains(strings.ToLower(err.Error()), "could not find the requested resource") {
+			// KubeVirt is not installed on this cluster; skip rather than fail.
+			t.Skipf("KubeVirt CRD or resource not found on cluster (%v); skipping TestLiveMigrationInBackground", err)
+		}
 		t.Fatalf("Unable to get kubevirt/kubevirt: %v", err)
 	}
 	available := false
 	for _, condition := range obj.Status.Conditions {
-		if condition.Type == kvcorev1.KubeVirtConditionAvailable {
-			if condition.Status == corev1.ConditionTrue {
-				available = true
-			}
+		if condition.Type == kvcorev1.KubeVirtConditionAvailable && condition.Status == corev1.ConditionTrue {
+			available = true
 		}
 	}
 	if !available {
-		t.Fatalf("Kubevirt is not available")
+		// KubeVirt is installed but its Available condition is false — this is a
+		// broken or degraded installation, not an absent one.  Skipping would hide
+		// the problem; fail so the issue is surfaced.
+		t.Fatalf("KubeVirt is installed (kubevirt/kubevirt exists) but its Available condition is not True — installation may be degraded. Fix the KubeVirt installation or skip via SKIP_KUBEVIRT_INSTALL before running this test.")
 	}
 	klog.Infof("Kubevirt is available")
 }
@@ -344,7 +349,7 @@ func observeLiveMigration(t *testing.T, ctx context.Context, kubeClient clientse
 
 func createAndWaitForDeschedulerRunning(t *testing.T, ctx context.Context, kubeClient clientset.Interface, deschedulerDeploymentObj *appsv1.Deployment) string {
 	klog.Infof("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
-	_, err := kubeClient.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Create(ctx, deschedulerDeploymentObj, metav1.CreateOptions{})
+	_, err := createDeschedulerDeployment(ctx, t, kubeClient, deschedulerDeploymentObj)
 	if err != nil {
 		t.Fatalf("Error creating %q deployment: %v", deschedulerDeploymentObj.Name, err)
 	}
@@ -473,7 +478,11 @@ func TestLiveMigrationInBackground(t *testing.T) {
 		}
 	}()
 
-	deschedulerDeploymentObj := deschedulerDeployment("kube-system")
+	runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, kubeClient, "kube-system")
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+	}
+	deschedulerDeploymentObj := deschedulerDeployment("kube-system", &runAsU, &runAsG)
 	// Set the descheduling interval to 10s
 	deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args = []string{"--policy-config-file", "/policy-dir/policy.yaml", "--descheduling-interval", "10s", "--v", "4", "--feature-gates", "EvictionsInBackground=true"}
 
@@ -515,7 +524,7 @@ func TestLiveMigrationInBackground(t *testing.T) {
 	policy.MaxNoOfPodsToEvictPerNamespace = nil
 	updateDeschedulerPolicy(t, ctx, kubeClient, policy)
 
-	deschedulerDeploymentObj = deschedulerDeployment("kube-system")
+	deschedulerDeploymentObj = deschedulerDeployment("kube-system", &runAsU, &runAsG)
 	deschedulerDeploymentObj.Spec.Template.Spec.Containers[0].Args = []string{"--policy-config-file", "/policy-dir/policy.yaml", "--descheduling-interval", "100m", "--v", "4", "--feature-gates", "EvictionsInBackground=true"}
 	deschedulerPodName = createAndWaitForDeschedulerRunning(t, ctx, kubeClient, deschedulerDeploymentObj)
 

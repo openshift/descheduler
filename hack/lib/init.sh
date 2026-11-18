@@ -35,6 +35,8 @@ OS_ROOT="$( os::util::absolute_path "${init_source}" )"
 export OS_ROOT
 cd "${OS_ROOT}"
 
+PRJ_PREFIX="sigs.k8s.io/descheduler"
+
 for library_file in $( find "${OS_ROOT}/hack/lib" -type f -name '*.sh' -not -path '*/hack/lib/init.sh' ); do
 	source "${library_file}"
 done

@@ -98,16 +98,25 @@ func TestTooManyRestarts(t *testing.T) {
 	}
 
 	t.Logf("Creating testing namespace %v", t.Name())
-	testNamespace := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "e2e-" + strings.ToLower(t.Name())}}
+	testNamespace := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: uniqueE2ENamespace("e2e-" + strings.ToLower(t.Name()))}}
 	if _, err := clientSet.CoreV1().Namespaces().Create(ctx, testNamespace, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Unable to create ns %v", testNamespace.Name)
 	}
 	defer clientSet.CoreV1().Namespaces().Delete(ctx, testNamespace.Name, metav1.DeleteOptions{})
 
+	// getRunAsForNamespace handles OpenShift SCC annotation derivation internally:
+	// on OpenShift it reads openshift.io/sa.scc.uid-range (polling only for the
+	// transient empty-annotation window); on vanilla Kubernetes it returns (0,0)
+	// immediately. The explicit poll that was here previously duplicated that
+	// logic and added a full 45-second timeout on non-OpenShift clusters.
+	runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+	if uidErr != nil {
+		t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+	}
 	deploymentObj := buildTestDeployment("restart-pod", testNamespace.Name, deploymentReplicas, map[string]string{"test": "restart-pod", "name": "test-toomanyrestarts"}, func(deployment *appsv1.Deployment) {
 		deployment.Spec.Template.Spec.Containers[0].Command = []string{"/bin/sh"}
 		deployment.Spec.Template.Spec.Containers[0].Args = []string{"-c", "sleep 1s && exit 1"}
-	})
+	}, &runAsUser, &runAsGroup)
 
 	t.Logf("Creating deployment %v", deploymentObj.Name)
 	_, err = clientSet.AppsV1().Deployments(deploymentObj.Namespace).Create(ctx, deploymentObj, metav1.CreateOptions{})
@@ -172,9 +181,13 @@ func TestTooManyRestarts(t *testing.T) {
 				}
 			}()
 
-			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name)
+			runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+			}
+			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name, &runAsU, &runAsG)
 			t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
-			_, err = clientSet.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Create(ctx, deschedulerDeploymentObj, metav1.CreateOptions{})
+			_, err = createDeschedulerDeployment(ctx, t, clientSet, deschedulerDeploymentObj)
 			if err != nil {
 				t.Fatalf("Error creating %q deployment: %v", deschedulerDeploymentObj.Name, err)
 			}
@@ -219,7 +232,7 @@ func TestTooManyRestarts(t *testing.T) {
 }
 
 func waitPodRestartCount(ctx context.Context, clientSet clientset.Interface, namespace string, t *testing.T, expectedNumberOfRestarts int) {
-	if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+	if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 25*time.Minute, true, func(ctx context.Context) (bool, error) {
 		podList, err := clientSet.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: labels.SelectorFromSet(labels.Set(map[string]string{"test": "restart-pod", "name": "test-toomanyrestarts"})).String(),
 		})

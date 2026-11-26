@@ -119,7 +119,11 @@ func TestFailedPods(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			job := initFailedJob(tc.name, testNamespace.Namespace)
+			runAsUser, runAsGroup, uidErr := getRunAsForNamespace(ctx, clientSet, testNamespace.Name)
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", testNamespace.Name, uidErr)
+			}
+			job := initFailedJob(tc.name, testNamespace.Name, &runAsUser, &runAsGroup)
 			t.Logf("Creating job %s in %s namespace", job.Name, job.Namespace)
 			jobClient := clientSet.BatchV1().Jobs(testNamespace.Name)
 			if _, err := jobClient.Create(ctx, job, metav1.CreateOptions{}); err != nil {
@@ -164,9 +168,13 @@ func TestFailedPods(t *testing.T) {
 				}
 			}()
 
-			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name)
+			runAsU, runAsG, uidErr := getRunAsForNamespace(ctx, clientSet, "kube-system")
+			if uidErr != nil {
+				t.Fatalf("getRunAsForNamespace(%q): %v", "kube-system", uidErr)
+			}
+			deschedulerDeploymentObj := deschedulerDeployment(testNamespace.Name, &runAsU, &runAsG)
 			t.Logf("Creating descheduler deployment %v", deschedulerDeploymentObj.Name)
-			_, err = clientSet.AppsV1().Deployments(deschedulerDeploymentObj.Namespace).Create(ctx, deschedulerDeploymentObj, metav1.CreateOptions{})
+			_, err = createDeschedulerDeployment(ctx, t, clientSet, deschedulerDeploymentObj)
 			if err != nil {
 				t.Fatalf("Error creating %q deployment: %v", deschedulerDeploymentObj.Name, err)
 			}
@@ -219,8 +227,8 @@ func TestFailedPods(t *testing.T) {
 	}
 }
 
-func initFailedJob(name, namespace string) *batchv1.Job {
-	podSpec := makePodSpec("", nil)
+func initFailedJob(name, namespace string, runAsUser, runAsGroup *int64) *batchv1.Job {
+	podSpec := makePodSpec("", nil, runAsUser, runAsGroup)
 	podSpec.Containers[0].Command = []string{"/bin/false"}
 	podSpec.RestartPolicy = v1.RestartPolicyNever
 	labelsSet := labels.Set{"test": name, "name": name}
